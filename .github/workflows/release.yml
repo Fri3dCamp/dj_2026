@@ -1,0 +1,51 @@
+name: PlatformIO CI
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio
+          pio pkg install -g -p https://github.com/Community-PIO-CH32V/platform-ch32v.git
+
+      - name: Parse Tag
+        uses: yukiakai212/publish-tag@v1
+        id: tag
+        with:
+          prefix: "v"
+
+      - name: Run PlatformIO Build
+        working-directory: Firmware
+        run: pio run -e release
+        env:
+          PLATFORMIO_BUILD_FLAGS: "-DVERSION_MAJOR=\\\"${{ steps.tag.outputs.major }}\\\" -DVERSION_MINOR=\\\"${{ steps.tag.outputs.minor }}\\\" -DVERSION_PATCH=\\\"${{ steps.tag.outputs.patch }}\\\""
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          draft: true
+          prerelease: false
+          files: Firmware/.pio/build/**/firmware.bin
