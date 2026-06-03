@@ -1,0 +1,13 @@
+Output: Stencil TOP
+Type  : Gerber
+From  : PCB Document [Fri3d_2026_DJ_00.PcbDoc]
+   Generated File[Fri3d_2026_DJ_00.GTP]
+   Generated File[Fri3d_2026_DJ_00.RUL]
+   Generated File[Fri3d_2026_DJ_00.EXTREP]
+   Generated File[Fri3d_2026_DJ_00.REP]
+
+
+Files Generated   : 4
+Documents Printed : 0
+
+Finished Output Generation At 21:54:52 On 19/12/2025
