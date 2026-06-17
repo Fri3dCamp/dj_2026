@@ -228,6 +228,7 @@ typedef struct
  * Value 0 turns the LED off (handled separately).
  */
 static const ws2812b_color_t mixxx_palette[] = {
+    {.g = 0x00, .r = 0x00, .b = 0x00}, // 0: off
     {.g = 0x0a, .r = 0xc5, .b = 0x08}, // 1: orange-red
     {.g = 0xbe, .r = 0x32, .b = 0x44}, // 2: teal
     {.g = 0xd4, .r = 0x42, .b = 0xf4}, // 3: yellow-green
@@ -1140,26 +1141,26 @@ static void handle_midi(uint8_t cin, uint8_t b1, uint8_t b2, uint8_t b3)
             if (b2 < BASE_NOTE_LEDS)
             {
                 /* invalid led index */
+                PRINT("Control Change: invalid LED index, b2 0x%x\r\n", b2);
                 break;
             }
 
             if ((b2 - BASE_NOTE_LEDS) >= LEDS_NUM)
             {
                 /* invalid led index */
+                PRINT("Control Change: invalid LED index, b2 0x%x\r\n", b2);
                 break;
             }
 
-            if (b3 == 0)
+            if (b3 < (sizeof(mixxx_palette) / sizeof(mixxx_palette[0])))
             {
-                state.data.leds[b2 - BASE_NOTE_LEDS].r = 0;
-                state.data.leds[b2 - BASE_NOTE_LEDS].g = 0;
-                state.data.leds[b2 - BASE_NOTE_LEDS].b = 0;
+                state.data.leds[b2 - BASE_NOTE_LEDS] = mixxx_palette[b3];
+                state.flag_update_leds = 1;
             }
-            else if (b3 < 10)
+            else
             {
-                state.data.leds[b2 - BASE_NOTE_LEDS] = mixxx_palette[b3 - 1];
+                PRINT("Control Change: invalid LED color, b3 0x%x\r\n", b3);
             }
-            state.flag_update_leds = 1;
             break;
 
         case 0x0C: /* Program Change */
@@ -1224,7 +1225,7 @@ int main(void)
     /* zero out all state flags and register map data */
     memset(&state, 0, sizeof(addon_state_t));
     memset(adc_previous_results, 0, ADC_CHANNELS);
-    memset(&uart_rx_buf, 0, 4);
+    memset(uart_rx_buf, 0, 4);
 
     /* Write firmware version (built from git tags via VERSION_MAJOR/MINOR/PATCH macros)
      * into the register map so the badge can read it over I2C
