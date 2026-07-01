@@ -4,10 +4,10 @@
 #define CH32X035_ESIG_UNIID2    0x1FFFF7EC
 #define CH32X035_ESIG_UNIID3    0x1FFFF7F0
 
-#define WCH_USBMIDI_MANUF_STR            "WCH"
-#define WCH_USBMIDI_PROD_STR             "CH32X035-MIDI"
+#define WCH_USBMIDI_MANUF_STR            "Fri3d.be"
+#define WCH_USBMIDI_PROD_STR             "dj2026"
 #define WCH_USBMIDI_INTERF_STR           "USBMIDI"
-#define WCH_USBMIDI_SERIAL_PREFIX        "MD"
+#define WCH_USBMIDI_SERIAL_PREFIX        "FD"
 
 #define STR_LEN(s) (sizeof(s) - 1)
 
