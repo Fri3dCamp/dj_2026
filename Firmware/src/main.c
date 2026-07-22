@@ -1227,6 +1227,7 @@ static void handle_midi(uint8_t cin, uint8_t b1, uint8_t b2, uint8_t b3)
             val -= 8192; /* Center at 0 */
             PRINT("Pitch bend: channel %d, val %d\r\n", channel, val);
             break;
+        }
 
         case 0x0F: /* Single Byte (Real Time) */
             PRINT("single byte: 0x%02x\r\n", b1);
