@@ -1221,12 +1221,13 @@ static void handle_midi(uint8_t cin, uint8_t b1, uint8_t b2, uint8_t b3)
                   b2);
             break;
 
-        case 0x0E: /* Pitch Bend */
+        case 0x0E: {/* Pitch Bend */
             /* Reconstruct 14-bit value from LSB (b2) and MSB (b3) */
             int val = (b2 & 0x7F) | ((b3 & 0x7F) << 7);
             val -= 8192; /* Center at 0 */
             PRINT("Pitch bend: channel %d, val %d\r\n", channel, val);
             break;
+        }
 
         case 0x0F: /* Single Byte (Real Time) */
             PRINT("single byte: 0x%02x\r\n", b1);
@@ -1483,16 +1484,16 @@ int main(void)
          */
         for (int i = 0; i < ADC_CHANNELS; i++)
         {
-            /* Scale the 12-bit ADC value to 7-bit MIDI range.
-             * >>5 divides by 32: 4096/32 = 128, which fits in a 7-bit MIDI value.
-             * The value is inverted (0xff - new_adc) so that fully clockwise = max.
+            /* Scale the 12-bit ADC value to the 7-bit MIDI range.
+             * >>5 converts 0–4095 to 0–127.
+             * The transmitted value is inverted so fully clockwise = maximum.
              */
-            uint8_t new_adc = ((state.data.adc_channels[i] >> 5) & 0xff);
+            uint8_t new_adc = state.data.adc_channels[i] >> 5;
             uint8_t diff = (adc_previous_results[i] > new_adc) ? (adc_previous_results[i] - new_adc) : (new_adc - adc_previous_results[i]);
             if (diff > HYSTERESIS)
             {
                 /* ADC value changed enough to report; send a CC message */
-                USBSendControlChange(MIDI_CHANNEL, base_note_adc[i], 0xff - new_adc);
+                USBSendControlChange(MIDI_CHANNEL, base_note_adc[i], MIDI_MAX - new_adc);
                 adc_previous_results[i] = new_adc;
             }
 
