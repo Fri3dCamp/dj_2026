@@ -667,6 +667,14 @@ static void i2c_slave_process(void)
         PRINT("I2C STOP\r\n");
         /* writing CTLR1 after reading STAR1 clears STOPF */
         I2C1->CTLR1 &= ~(I2C_CTLR1_STOP);
+
+        /* Re-arm "next byte is a register offset" here too, not just on ADDR.
+         * If back-to-back transactions leave too little bus-free time, the next
+         * transaction's ADDR event can be missed/coalesced; without this, its
+         * offset byte would be written into raw_data[] as stray data instead of
+         * being captured as the new offset.
+         */
+        state.flag_slave_first_write = 1;
     }
 
     /* Reading STAR2 releases clock stretching so the master can continue.
