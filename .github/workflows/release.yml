@@ -13,10 +13,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
@@ -40,7 +40,7 @@ jobs:
 
       - name: Create Release
         id: create_release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -49,3 +49,37 @@ jobs:
           draft: true
           prerelease: false
           files: Firmware/.pio/build/**/firmware.bin
+
+      - name: Publish to BadgeHub
+        env:
+          BADGEHUB_TOKEN: ${{ secrets.BADGEHUB_TOKEN }}
+          BADGEHUB_PROJECT: dj_2026
+          FIRMWARE_PATH: Firmware/.pio/build/release/firmware.bin
+        run: |
+          set -euo pipefail
+
+          api_url="https://badgehub.eu/api/v3/projects/${BADGEHUB_PROJECT}"
+          release_version="${GITHUB_REF_NAME#v}"
+
+          draft_metadata="$(
+            curl --fail-with-body --retry 3 \
+              --header "badgehub-api-token: ${BADGEHUB_TOKEN}" \
+              "${api_url}/draft" \
+              | jq --arg version "${release_version}" \
+                  '.version.app_metadata | .version = $version'
+          )"
+
+          curl --fail-with-body --retry 3 --request PATCH \
+            --header "badgehub-api-token: ${BADGEHUB_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data "${draft_metadata}" \
+            "${api_url}/draft/metadata"
+
+          curl --fail-with-body --retry 3 --request POST \
+            --header "badgehub-api-token: ${BADGEHUB_TOKEN}" \
+            --form "file=@${FIRMWARE_PATH};type=application/octet-stream" \
+            "${api_url}/draft/files/firmware.bin"
+
+          curl --fail-with-body --retry 3 --request PATCH \
+            --header "badgehub-api-token: ${BADGEHUB_TOKEN}" \
+            "${api_url}/publish"
