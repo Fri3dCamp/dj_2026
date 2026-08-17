@@ -616,7 +616,6 @@ static void i2c_slave_process(void)
             state.slave_offset = byte;
             state.slave_position = byte;
             state.flag_slave_first_write = 0;
-            PRINT("I2C reg: 0x%02x\r\n", byte);
         }
         else
         {
@@ -627,14 +626,6 @@ static void i2c_slave_process(void)
                     /* Writable region (LED data): store the byte and notify the main loop. */
                     state.raw_data[state.slave_position] = byte;
                     state.flag_update_leds = 1;
-                }
-                else
-                {
-                    /* Read-only region: discard the byte silently.
-                     * slave_position is still incremented below so the cursor advances
-                     * even though we did not write, keeping alignment for any further bytes.
-                     */
-                    PRINT("ERROR: trying to write 0x%x to readonly data: 0x%x\r\n", byte, state.slave_position);
                 }
             }
             state.slave_position++;
@@ -664,7 +655,6 @@ static void i2c_slave_process(void)
      */
     if (flag1 & I2C_STAR1_STOPF)
     {
-        PRINT("I2C STOP\r\n");
         /* writing CTLR1 after reading STAR1 clears STOPF */
         I2C1->CTLR1 &= ~(I2C_CTLR1_STOP);
 
