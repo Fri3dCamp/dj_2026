@@ -16,8 +16,6 @@ Please check the [schematics](TODO:local_link) to get more details about how the
 
 The DJ addon sends MIDI CC messages through the UART port to the badge at a baudrate of `115200 8N1`.
 
-TODO: receive MIDI CC messages to control the LEDs.
-
 ### I2C
 
 The DJ addon has I2C address `0x3A` and uses the following registers to interface/control with its connected peripherals:
@@ -37,7 +35,7 @@ The DJ addon has I2C address `0x3A` and uses the following registers to interfac
 | 0x14 | Crossfader | R | 2 | Reports the analog value (0-4095) |
 | 0x16 | Encoder: left | R | 2 | Reports the left encoder value (0-127) |
 | 0x18 | Encoder: right | R | 2 | Reports the right encoder value (0-127) |
-| 0x1A | Button RGB LEds | R/W | 24 | The RGB value of the button leds (0-255) |
+| 0x1A | Button RGB Leds | R/W | 24 | The RGB value of the button leds (0-255) |
 
 ## Building
 
