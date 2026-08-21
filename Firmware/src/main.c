@@ -14,6 +14,9 @@
  *   2. I2C slave (address 0x3A, bus speed 400kHz)
  *      - Master can read a register map containing all sensor values.
  *      - Master can write LED color data into the writable region.
+ *      - Master can write a trailing configuration byte to toggle the
+ *        "remap" (give SDA/SCL back to SWD for reflashing) and
+ *        "enable_uart_output" (enable/disable the USART3 MIDI link) flags.
  *
  *   3. UART
  *      - Sends and receives the same MIDI packets as on USB
@@ -172,11 +175,13 @@
 
 /*
  * Bytes at offset < RESULT_RW_OFFSET are read-only.
- * Writing starts at RESULT_RW_OFFSET (the LED region).
- * Total size = RESULT_BUFFER_SIZE = 50 bytes.
+ * Writing starts at RESULT_RW_OFFSET (the LED region), which extends through
+ * the trailing configuration byte at RESULT_CONFIG_OFFSET.
+ * Total size = RESULT_BUFFER_SIZE = 51 bytes.
  */
-#define RESULT_BUFFER_SIZE (3 + 1 + (ADC_CHANNELS * 2) + 2 + 2 + (LEDS_NUM * 3))
-#define RESULT_RW_OFFSET   (3 + 1 + (ADC_CHANNELS * 2) + 2 + 2) /* first writable byte offset */
+#define RESULT_BUFFER_SIZE   (3 + 1 + (ADC_CHANNELS * 2) + 2 + 2 + (LEDS_NUM * 3) + 1)
+#define RESULT_RW_OFFSET     (3 + 1 + (ADC_CHANNELS * 2) + 2 + 2) /* first writable byte offset */
+#define RESULT_CONFIG_OFFSET (RESULT_RW_OFFSET + (LEDS_NUM * 3))  /* configuration byte offset */
 
 static const uint8_t base_note_adc[ADC_CHANNELS] = {
     0x40, /* PM_LEFT_TOP */
@@ -251,6 +256,7 @@ static const ws2812b_color_t mixxx_palette[] = {
  *   0x16     2    Left encoder counter as uint16_t        (READ-ONLY)
  *   0x18     2    Right encoder counter as uint16_t       (READ-ONLY)
  *   0x1A    24    LED data: 8 × {G, R, B}                 (READ-WRITE)
+ *   0x32     1    Configuration flags (remap, enable_uart_output) (READ-WRITE)
  *
  * Packed struct that maps directly onto the I2C register map.
  * __attribute__((packed)) ensures no padding bytes are inserted,
@@ -264,6 +270,9 @@ typedef struct __attribute__((packed))
     uint16_t left_encoder;               /* quadrature counter for left encoder (wraps 0–MIDI_MAX) */
     uint16_t right_encoder;              /* quadrature counter for right encoder (wraps 0–MIDI_MAX) */
     ws2812b_color_t leds[LEDS_NUM];      /* current LED colors in GRB order (writable via I2C) */
+    uint8_t remap : 1;              /* write 1 to disable I2C1 and give the SDA/SCL pins back to SWD, so the board can be reflashed */
+    uint8_t enable_uart_output : 1; /* configuration flag to enable sending MIDI over USART3; defaults to 1. When 0, USART3 is disabled and its pins are tri-stated */
+    uint8_t reserved : 6;           /* reserved */
 } addon_data_t;
 
 /* Compile-time check: the struct layout must match the register map exactly */
@@ -280,7 +289,9 @@ typedef struct
     uint8_t flag_update_leds : 1;       /* set when LED data has changed and w2812_sync() must be called */
     uint8_t flag_matrix_scan_done : 1;  /* set when the button matrix state has been updated */
     uint8_t flag_slave_first_write : 1; /* set on every ADDR phase; the next RXNE byte is the register offset. */
-    uint8_t reserved : 5;               /* reserved for future use */
+    uint8_t flag_config_changed : 1;    /* set when the configuration byte has been written through I2C */
+    uint8_t flag_uart_enabled : 1;      /* whether USART3 is currently initialized for MIDI output */
+    uint8_t reserved : 3;               /* reserved for future use */
     uint8_t slave_offset;               /* register offset captured after the most recent ADDR+W. */
     uint8_t slave_position;             /* current read/write cursor, reset to offset on every ADDR (including repeated-START), so write-then-read works without special-casing. */
     uint8_t unused;                     /* unused byte to make the data 4 byte aligned */
@@ -337,7 +348,30 @@ static void USART3_Output_Init(uint32_t baudrate)
 
     USART_Init(USART3, &USART_InitStructure);
     USART_Cmd(USART3, ENABLE);
+    state.flag_uart_enabled = 1;
 }
+
+#ifndef DEBUG
+/*
+ * Disable USART3 and tri-state its pins so they float instead of interfering
+ * with whatever (if anything) is now driving them on the expansion connector.
+ * Used when the host clears the enable_uart_output configuration flag.
+ * Only meaningful in release builds: in debug builds USART3 also carries
+ * PRINT() output and must stay enabled.
+ */
+static void USART3_Output_DeInit(void)
+{
+    GPIO_InitTypeDef GPIO_InitStructure = {0};
+
+    state.flag_uart_enabled = 0;
+    USART_Cmd(USART3, DISABLE);
+
+    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_3 | GPIO_Pin_4;
+    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
+    GPIO_Init(GPIOB, &GPIO_InitStructure);
+}
+#endif
 
 /*
  * Encode one byte of WS2812 data into 4 SPI bytes.
@@ -569,8 +603,9 @@ static void Scratch_Left_Encoder_Init(void)
  *     1st byte after address+W  = register offset → latched in slave_offset.
  *     Subsequent payload bytes  = written into raw_data[] at slave_position
  *                                 only if slave_position >= RESULT_RW_OFFSET
- *                                 (the writable LED region). Read-only bytes
- *                                 are silently discarded.
+ *                                 (the writable LED region, followed by the
+ *                                 configuration byte at RESULT_CONFIG_OFFSET).
+ *                                 Read-only bytes are silently discarded.
  *     STOP: flag cleared so the peripheral is ready for the next transaction.
  *
  *   READ transaction (master ← slave), typically after a write to set the offset:
@@ -623,9 +658,16 @@ static void i2c_slave_process(void)
             {
                 if (state.slave_position >= RESULT_RW_OFFSET)
                 {
-                    /* Writable region (LED data): store the byte and notify the main loop. */
+                    /* Writable region: store the byte and notify the main loop. */
                     state.raw_data[state.slave_position] = byte;
-                    state.flag_update_leds = 1;
+                    if (state.slave_position == RESULT_CONFIG_OFFSET)
+                    {
+                        state.flag_config_changed = 1;
+                    }
+                    else
+                    {
+                        state.flag_update_leds = 1;
+                    }
                 }
             }
             state.slave_position++;
@@ -1068,7 +1110,8 @@ static void led_boot_sequence()
  *   [3] = MIDI data byte 2
  *
  * In release builds (no DEBUG), the same packet is also echoed over USART3
- * so the badge can receive it via serial.
+ * so the badge can receive it via serial, unless the enable_uart_output
+ * configuration flag has disabled and tri-stated USART3.
  */
 static void USBSendPacket(uint8_t cin, uint8_t b1, uint8_t b2, uint8_t b3)
 {
@@ -1080,6 +1123,10 @@ static void USBSendPacket(uint8_t cin, uint8_t b1, uint8_t b2, uint8_t b3)
     USB_write(packet, 4);
 #ifndef DEBUG
     /* Echo to USART3 for the badge to receive (blocking, byte by byte) */
+    if (!state.flag_uart_enabled)
+    {
+        return;
+    }
     for (int i = 0; i < 4; i++)
     {
         while (USART_GetFlagStatus(USART3, USART_FLAG_TC) == RESET)
@@ -1384,6 +1431,9 @@ int main(void)
     setColor(0, 0, 0);
     w2812_sync();
 
+    /* USART3 output is enabled by default; can be disabled through I2C configuration */
+    state.data.enable_uart_output = 1;
+
     while (1)
     {
         /* Snapshot the latest button matrix result set by the TIM3 ISR */
@@ -1522,6 +1572,41 @@ int main(void)
         if (previous_kb_result != current_kb_result)
         {
             previous_kb_result = current_kb_result;
+        }
+
+        /* I2C master wrote a new value to the configuration byte: apply it now. */
+        if (state.flag_config_changed)
+        {
+            state.flag_config_changed = 0;
+
+            if (state.data.remap)
+            {
+                PRINT("Remap SWD trigger\r\n");
+                Delay_Ms(100);
+
+                /* disable I2C interrupts */
+                I2C_ITConfig(I2C1, I2C_IT_EVT | I2C_IT_ERR | I2C_IT_BUF, DISABLE);
+
+                /* disable I2C1 */
+                I2C_Cmd(I2C1, DISABLE);
+
+                /* Re-enable DIO (SWD) interface on these pins */
+                GPIO_PinRemapConfig(GPIO_Remap_SWJ_Disable, DISABLE);
+            }
+
+#ifndef DEBUG
+            /* USART3 also carries debug PRINT() output in debug builds, so this
+             * configuration flag only applies to release builds.
+             */
+            if (state.data.enable_uart_output)
+            {
+                USART3_Output_Init(UART_BAUDRATE);
+            }
+            else
+            {
+                USART3_Output_DeInit();
+            }
+#endif
         }
     }
 }
