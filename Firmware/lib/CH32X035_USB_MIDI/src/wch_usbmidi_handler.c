@@ -242,7 +242,9 @@ static inline void MIDI_EP2_OUT(void) {
         for(int i=0; i<len; i++) {
             rx_fifo_push(wch_usbmidi_EP2_buffer[i]);
         }
-        USBFSD->UEP2_CTRL_H = USBFS_UEP_R_RES_ACK | USBFS_UEP_AUTO_TOG; // Re-arm for next
+        // Re-arm RX only; leave the TX (T_RES) state untouched so we don't
+        // accidentally force a stale/already-sent TX buffer back out
+        USBFSD->UEP2_CTRL_H = (USBFSD->UEP2_CTRL_H & ~USBFS_UEP_R_RES_MASK) | USBFS_UEP_R_RES_ACK | USBFS_UEP_AUTO_TOG;
     }
 }
 
