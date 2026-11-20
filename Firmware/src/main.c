@@ -32,6 +32,7 @@
  */
 
 #include <ch32x035.h> /* both X033 and X035 */
+#include <stddef.h>   /* offsetof() */
 #include <stdlib.h>   /* atoi() */
 #include <string.h>   /* memset() */
 
@@ -319,8 +320,20 @@ typedef struct
     };
 } addon_state_t;
 
-/* Global firmware state. */
-static addon_state_t state;
+/* The DMA writes the ADC results into the register map: keep them 4-byte aligned */
+_Static_assert(offsetof(addon_state_t, data.adc_channels) % 4 == 0, "ADC buffer is not 4-byte aligned!");
+
+/* Global firmware state. Aligned: the DMA writes the ADC values as halfwords. */
+static addon_state_t state __attribute__((aligned(4)));
+
+/*
+ * Copy of the read-only registers, taken at the start of every I2C read. The
+ * DMA updates the ADC values at any time: a value that changes between the
+ * transmission of its two bytes would be read torn (e.g. 0x07FF -> 0x0800
+ * read as 0x08FF).
+ */
+#define ADC_OFFSET (3 + 1) /* register offset of the first ADC channel */
+static uint8_t i2c_snapshot[RESULT_RW_OFFSET];
 
 /* variables for MIDI SysEx processing */
 #define MAX_SYSEX_DATA ((4 * LEDS_NUM) + 4)
@@ -610,6 +623,24 @@ static void Scratch_Left_Encoder_Init(void)
  *     The ADDR event fires again; slave_position is reset to slave_offset so
  *     the read starts at the register the master just pointed to.
  */
+static void i2c_take_snapshot(void)
+{
+    /* halfword loads: atomic against the DMA halfword writes */
+    const volatile uint16_t *adc = (const volatile uint16_t *)&state.raw_data[ADC_OFFSET];
+
+    memcpy(i2c_snapshot, state.raw_data, ADC_OFFSET);
+    for (int i = 0; i < ADC_CHANNELS; i++)
+    {
+        uint16_t value = adc[i];
+
+        i2c_snapshot[ADC_OFFSET + 2 * i] = value & 0xff;
+        i2c_snapshot[ADC_OFFSET + 2 * i + 1] = value >> 8;
+    }
+    /* the encoder values are written by the main loop, which does not run during this interrupt */
+    memcpy(&i2c_snapshot[ADC_OFFSET + 2 * ADC_CHANNELS], &state.raw_data[ADC_OFFSET + 2 * ADC_CHANNELS],
+           RESULT_RW_OFFSET - (ADC_OFFSET + 2 * ADC_CHANNELS));
+}
+
 static void i2c_slave_process(void)
 {
     uint32_t flag1 = 0, flag2 = 0;
@@ -661,13 +692,24 @@ static void i2c_slave_process(void)
     }
 
     /* Process transmitting data (master is reading from us).
-     * Send one byte from raw_data[] at the current pointer position and advance
-     * the pointer so consecutive TXE interrupts walk through the register file.
+     * Send one byte at the current pointer position (from the snapshot for the
+     * read-only registers, from raw_data[] for the others) and advance the
+     * pointer so consecutive TXE interrupts walk through the register file.
      * If slave_position is out of range, send 0x00 as a safe dummy byte.
      */
     if (flag1 & I2C_STAR1_TXE)
     {
-        if (state.slave_position < RESULT_BUFFER_SIZE)
+        /* First byte of a read: take a consistent copy of the read-only registers */
+        if (state.slave_position == state.slave_offset)
+        {
+            i2c_take_snapshot();
+        }
+
+        if (state.slave_position < RESULT_RW_OFFSET)
+        {
+            I2C_SendData(I2C1, i2c_snapshot[state.slave_position++]);
+        }
+        else if (state.slave_position < RESULT_BUFFER_SIZE)
         {
             I2C_SendData(I2C1, state.raw_data[state.slave_position++]);
         }
