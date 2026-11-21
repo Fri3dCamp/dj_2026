@@ -1,5 +1,9 @@
 var Fri3dDJ = {};
 
+// Decks 1 and 2 use MIDI channel 1, decks 3 and 4 the same CC numbers on
+// channel 2: a Fri3d badge running dj_app switches each side of the add-on
+// between deck 1/3 (left) and 2/4 (right). The crossfader is on channel 1.
+
 // Wheel sends an absolute encoder position, 0..127 wrapping, one CC per detent.
 // The "active" CC (0x45/0x55) is not a touch sensor: it pulses 127 before and 0
 // after every burst of position messages, so scratch is released by an
@@ -14,7 +18,7 @@ Fri3dDJ.lastPosition = {};
 Fri3dDJ.releaseTimer = {};
 
 // Button LEDs: CC 0x20..0x27 (same physical order as button CCs 0x60..0x67),
-// value selects a firmware palette color.
+// value selects a firmware palette color. Decks 3 and 4 use channel 2.
 Fri3dDJ.color = {
     off: 0,
     orangeRed: 1,
@@ -28,16 +32,30 @@ Fri3dDJ.color = {
     green: 9,
 };
 
-Fri3dDJ.leds = [
-    { cc: 0x20, group: "[Channel1]", control: "cue_indicator", color: 1 },
-    { cc: 0x21, group: "[Channel1]", control: "hotcue_1_status", color: 5 },
-    { cc: 0x22, group: "[Channel2]", control: "hotcue_1_status", color: 5 },
-    { cc: 0x23, group: "[Channel2]", control: "cue_indicator", color: 1 },
-    { cc: 0x24, group: "[Channel1]", control: "play_indicator", color: 9 },
-    { cc: 0x25, group: "[Channel1]", control: "hotcue_2_status", color: 6 },
-    { cc: 0x26, group: "[Channel2]", control: "hotcue_2_status", color: 6 },
-    { cc: 0x27, group: "[Channel2]", control: "play_indicator", color: 9 },
+Fri3dDJ.ledLayout = [
+    { cc: 0x20, side: 0, control: "cue_indicator", color: 1 },
+    { cc: 0x21, side: 0, control: "hotcue_1_status", color: 5 },
+    { cc: 0x22, side: 1, control: "hotcue_1_status", color: 5 },
+    { cc: 0x23, side: 1, control: "cue_indicator", color: 1 },
+    { cc: 0x24, side: 0, control: "play_indicator", color: 9 },
+    { cc: 0x25, side: 0, control: "hotcue_2_status", color: 6 },
+    { cc: 0x26, side: 1, control: "hotcue_2_status", color: 6 },
+    { cc: 0x27, side: 1, control: "play_indicator", color: 9 },
 ];
+
+// The LEDs of decks 1 and 2 on channel 1 (0xB0), of decks 3 and 4 on channel 2 (0xB1)
+Fri3dDJ.leds = [];
+[0, 1].forEach(function (layer) {
+    Fri3dDJ.ledLayout.forEach(function (led) {
+        Fri3dDJ.leds.push({
+            status: 0xb0 + layer,
+            cc: led.cc,
+            group: "[Channel" + (1 + led.side + 2 * layer) + "]",
+            control: led.control,
+            color: led.color,
+        });
+    });
+});
 
 Fri3dDJ.connections = [];
 
@@ -45,7 +63,7 @@ Fri3dDJ.init = function (_id, _debugging) {
     Fri3dDJ.leds.forEach(function (led) {
         var conn = engine.makeConnection(led.group, led.control, function (value) {
             midi.sendShortMsg(
-                0xb0,
+                led.status,
                 led.cc,
                 value > 0 ? led.color : Fri3dDJ.color.off
             );
@@ -56,14 +74,15 @@ Fri3dDJ.init = function (_id, _debugging) {
 };
 
 Fri3dDJ.shutdown = function () {
-    engine.scratchDisable(1);
-    engine.scratchDisable(2);
+    [1, 2, 3, 4].forEach(function (deck) {
+        engine.scratchDisable(deck);
+    });
     Fri3dDJ.connections.forEach(function (conn) {
         conn.disconnect();
     });
     Fri3dDJ.connections = [];
     Fri3dDJ.leds.forEach(function (led) {
-        midi.sendShortMsg(0xb0, led.cc, Fri3dDJ.color.off);
+        midi.sendShortMsg(led.status, led.cc, Fri3dDJ.color.off);
     });
 };
 
@@ -101,20 +120,26 @@ Fri3dDJ.armRelease = function (deck) {
 
 // The firmware emits duplicate button messages: a press can repeat 127 a few
 // times (also spuriously mid-hold) and a release can repeat 0. Only act on
-// real state transitions.
+// real state transitions. A button drives deck 1 or 3 (2 or 4) depending on
+// the channel, so the state is per channel and control.
 Fri3dDJ.buttonState = {};
 
-Fri3dDJ.buttonEdge = function (control, value) {
+Fri3dDJ.buttonKey = function (channel, control) {
+    return channel * 256 + control;
+};
+
+Fri3dDJ.buttonEdge = function (channel, control, value) {
+    var key = Fri3dDJ.buttonKey(channel, control);
     var pressed = value > 0;
-    if (Fri3dDJ.buttonState[control] === pressed) {
+    if (Fri3dDJ.buttonState[key] === pressed) {
         return null;
     }
-    Fri3dDJ.buttonState[control] = pressed;
+    Fri3dDJ.buttonState[key] = pressed;
     return pressed;
 };
 
-Fri3dDJ.playButton = function (_channel, control, value, _status, group) {
-    if (Fri3dDJ.buttonEdge(control, value) === true) {
+Fri3dDJ.playButton = function (channel, control, value, _status, group) {
+    if (Fri3dDJ.buttonEdge(channel, control, value) === true) {
         script.toggleControl(group, "play");
     }
 };
@@ -125,21 +150,22 @@ Fri3dDJ.playButton = function (_channel, control, value, _status, group) {
 // case goes through cue_gotoandstop and its release is swallowed.
 Fri3dDJ.cueSuppressRelease = {};
 
-Fri3dDJ.cueButton = function (_channel, control, value, _status, group) {
-    var edge = Fri3dDJ.buttonEdge(control, value);
+Fri3dDJ.cueButton = function (channel, control, value, _status, group) {
+    var key = Fri3dDJ.buttonKey(channel, control);
+    var edge = Fri3dDJ.buttonEdge(channel, control, value);
     if (edge === null) {
         return;
     }
     if (edge) {
         if (engine.getValue(group, "play") > 0) {
-            Fri3dDJ.cueSuppressRelease[control] = true;
+            Fri3dDJ.cueSuppressRelease[key] = true;
             engine.setValue(group, "cue_gotoandstop", 1);
             engine.setValue(group, "cue_gotoandstop", 0);
         } else {
-            Fri3dDJ.cueSuppressRelease[control] = false;
+            Fri3dDJ.cueSuppressRelease[key] = false;
             engine.setValue(group, "cue_default", 1);
         }
-    } else if (!Fri3dDJ.cueSuppressRelease[control]) {
+    } else if (!Fri3dDJ.cueSuppressRelease[key]) {
         engine.setValue(group, "cue_default", 0);
     }
 };
@@ -149,25 +175,26 @@ Fri3dDJ.longPressMs = 500;
 Fri3dDJ.hotcueForControl = { 0x61: 1, 0x62: 1, 0x65: 2, 0x66: 2 };
 Fri3dDJ.hotcueTimer = {};
 
-Fri3dDJ.hotcueButton = function (_channel, control, value, _status, group) {
+Fri3dDJ.hotcueButton = function (channel, control, value, _status, group) {
+    var key = Fri3dDJ.buttonKey(channel, control);
     var num = Fri3dDJ.hotcueForControl[control];
-    var edge = Fri3dDJ.buttonEdge(control, value);
+    var edge = Fri3dDJ.buttonEdge(channel, control, value);
     if (edge === null) {
         return;
     }
     if (edge) {
-        Fri3dDJ.hotcueTimer[control] = engine.beginTimer(
+        Fri3dDJ.hotcueTimer[key] = engine.beginTimer(
             Fri3dDJ.longPressMs,
             function () {
-                Fri3dDJ.hotcueTimer[control] = null;
+                Fri3dDJ.hotcueTimer[key] = null;
                 engine.setValue(group, "hotcue_" + num + "_clear", 1);
                 engine.setValue(group, "hotcue_" + num + "_clear", 0);
             },
             true
         );
-    } else if (Fri3dDJ.hotcueTimer[control]) {
-        engine.stopTimer(Fri3dDJ.hotcueTimer[control]);
-        Fri3dDJ.hotcueTimer[control] = null;
+    } else if (Fri3dDJ.hotcueTimer[key]) {
+        engine.stopTimer(Fri3dDJ.hotcueTimer[key]);
+        Fri3dDJ.hotcueTimer[key] = null;
         engine.setValue(group, "hotcue_" + num + "_activate", 1);
         engine.setValue(group, "hotcue_" + num + "_activate", 0);
     }
