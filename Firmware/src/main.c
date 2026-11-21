@@ -308,19 +308,23 @@ _Static_assert(sizeof(addon_data_t) == RESULT_BUFFER_SIZE, "raw data and struct 
 /*
  * Global firmware state.
  * Flags are set by interrupt handlers and consumed by the main loop.
+ *
+ * Every flag has its own byte: writing a byte is a single store, while
+ * writing a bitfield is a read-modify-write of the whole byte that can
+ * overwrite a flag set by an interrupt in between. They are volatile because
+ * the main loop polls flags that are set by interrupt handlers.
  * The union lets I2C code treat the structured data as a flat byte array
  * for simple indexed access using raw_data_ptr.
  */
 typedef struct
 {
-    uint8_t flag_update_leds : 1;       /* set when LED data has changed and w2812_sync() must be called */
-    uint8_t flag_matrix_scan_done : 1;  /* set when the button matrix state has been updated */
-    uint8_t flag_slave_first_write : 1; /* set on every ADDR phase; the next RXNE byte is the register offset. */
-    uint8_t flag_config_changed : 1;    /* set when the configuration byte has been written through I2C */
-    uint8_t reserved : 4;               /* reserved for future use */
-    uint8_t slave_offset;               /* register offset captured after the most recent ADDR+W. */
-    uint8_t slave_position;             /* current read/write cursor, reset to offset on every ADDR (including repeated-START), so write-then-read works without special-casing. */
-    uint8_t unused;                     /* unused byte to make the data 4 byte aligned */
+    volatile uint8_t flag_update_leds;       /* set when LED data has changed and w2812_sync() must be called */
+    volatile uint8_t flag_matrix_scan_done;  /* set when the button matrix state has been updated */
+    volatile uint8_t flag_slave_first_write; /* set on every ADDR phase; the next RXNE byte is the register offset. */
+    volatile uint8_t flag_config_changed;    /* set when the configuration byte has been written through I2C */
+    uint8_t slave_offset;                    /* register offset captured after the most recent ADDR+W. */
+    uint8_t slave_position;                  /* current read/write cursor, reset to offset on every ADDR (including repeated-START), so write-then-read works without special-casing. */
+    uint8_t unused[2];                       /* unused bytes to make the data 4 byte aligned */
     union
     {
         addon_data_t data;                    /* structured access to the register map */
