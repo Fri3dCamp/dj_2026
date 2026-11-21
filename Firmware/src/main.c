@@ -205,14 +205,15 @@
 #define RESULT_BUFFER_SIZE (3 + 1 + (ADC_CHANNELS * 2) + 2 + 2 + (LEDS_NUM * 3))
 #define RESULT_RW_OFFSET   (3 + 1 + (ADC_CHANNELS * 2) + 2 + 2) /* first writable byte offset */
 
+/* CC number per ADC channel, in the order of the ADC ranks (adc_channels[i] is rank i + 1) */
 static const uint8_t base_note_adc[ADC_CHANNELS] = {
-    0x40, /* PM_LEFT_TOP */
+    0x40, /* PM_LEFT_BOTTOM */
     0x41, /* PM_LEFT_MID */
-    0x42, /* PM_LEFT_BOTTOM */
+    0x42, /* PM_LEFT_TOP */
     0x43, /* SLIDER_LEFT */
-    0x50, /* PM_RIGHT_TOP */
+    0x50, /* PM_RIGHT_BOTTOM */
     0x51, /* PM_RIGHT_MID */
-    0x52, /* PM_RIGHT_BOTTOM */
+    0x52, /* PM_RIGHT_TOP */
     0x53, /* SLIDER_RIGHT */
     0x59, /* SLIDER_MID */
 };
