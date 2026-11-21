@@ -42,7 +42,14 @@ The DJ addon has I2C address `0x3A` and uses the following registers to interfac
 Use [platformio](https://platformio.org) to build this project. You should install the [ch32v platform package](https://github.com/Community-PIO-CH32V/platform-ch32v) as well. If you use the command line, build using:
 
 ```
-pio run
+pio run -e debug
+```
+
+Release builds get their version from the git tag in the release workflow. To build one locally, pass the version
+of the next release:
+
+```
+PLATFORMIO_BUILD_FLAGS='-DVERSION_MAJOR=\"1\" -DVERSION_MINOR=\"0\" -DVERSION_PATCH=\"4\"' pio run -e release
 ```
 
 ## Flashing
