@@ -10,4 +10,5 @@ deck's current value.
 
 The badge's own controls browse the library: the joystick moves up and down in the list (repeating while held) and
 left and right between the sidebar and the track list; A loads the selected track into the deck of the left side
-(1 or 3), B into the deck of the right side (2 or 4). X and Y switch the decks on the badge, like the touchscreen.
+(1 or 3), B into the deck of the right side (2 or 4). X, Y, MENU and START send CC 0x6E, 0x6F, 0x70 and 0x71 on
+channel 1 and are not mapped yet.
