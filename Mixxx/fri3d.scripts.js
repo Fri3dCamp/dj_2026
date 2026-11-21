@@ -223,3 +223,25 @@ Fri3dDJ.wheelTurn = function (_channel, _control, value, _status, group) {
     var delta = -(((value - last + 192) % 128) - 64);
     engine.scratchTick(deck, delta);
 };
+
+// Badge joystick (CC 0x68-0x6B on channel 1): browse the library. Up and down
+// repeat 127 while held, so every press message moves one row.
+Fri3dDJ.libraryMove = function (_channel, control, value) {
+    if (value === 0) {
+        return;
+    }
+    switch (control) {
+    case 0x68:
+        engine.setValue("[Library]", "MoveVertical", -1);
+        break;
+    case 0x69:
+        engine.setValue("[Library]", "MoveVertical", 1);
+        break;
+    case 0x6a:
+        engine.setValue("[Library]", "MoveFocusBackward", 1);
+        break;
+    case 0x6b:
+        engine.setValue("[Library]", "MoveFocusForward", 1);
+        break;
+    }
+};
