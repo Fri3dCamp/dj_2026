@@ -169,6 +169,14 @@
  */
 #define HYSTERESIS (1)
 
+/* Raw ADC counts ignored at both ends of the potmeter and fader range for
+ * MIDI: some do not reach the extreme ADC values (a crossfader stops about 95
+ * counts from an end, a potmeter about 60), so their MIDI value would never
+ * reach 0 or 127. The I2C registers keep the raw values.
+ */
+#define ADC_DEAD_ZONE (128)
+#define ADC_MAX       (4095)
+
 /* midi-usb */
 #define MIDI_CHANNEL (0)    /* MIDI channel 1 (0-indexed) */
 #define MIDI_MAX     (0x7f) /* maximum value for a 7-bit MIDI data byte */
@@ -1388,6 +1396,27 @@ static void handle_midi(uint8_t cin, uint8_t b1, uint8_t b2, uint8_t b3)
 }
 
 /*
+ * Scale a raw 12-bit ADC value to 7-bit MIDI, without the dead zone at both
+ * ends of the range (ADC_DEAD_ZONE).
+ */
+static uint8_t adc_to_midi(uint16_t raw)
+{
+    int32_t value = (int32_t)raw - ADC_DEAD_ZONE;
+
+    if (value < 0)
+    {
+        value = 0;
+    }
+    value = value * ADC_MAX / (ADC_MAX - 2 * ADC_DEAD_ZONE);
+    if (value > ADC_MAX)
+    {
+        value = ADC_MAX;
+    }
+
+    return value >> 5;
+}
+
+/*
  * Main entry point.
  *
  * Initializes all peripherals, then runs the main event loop forever.
@@ -1575,13 +1604,18 @@ int main(void)
          */
         for (int i = 0; i < ADC_CHANNELS; i++)
         {
-            /* Scale the 12-bit ADC value to the 7-bit MIDI range.
-             * >>5 converts 0–4095 to 0–127.
+            /* Scale the 12-bit ADC value to the 7-bit MIDI range, without the
+             * dead zone at both ends (adc_to_midi()).
              * The transmitted value is inverted so fully clockwise = maximum.
              */
-            uint8_t new_adc = state.data.adc_channels[i] >> 5;
+            uint8_t new_adc = adc_to_midi(state.data.adc_channels[i]);
             uint8_t diff = (adc_previous_results[i] > new_adc) ? (adc_previous_results[i] - new_adc) : (new_adc - adc_previous_results[i]);
-            if (diff > HYSTERESIS)
+            /* The ends are always reported, also when they are within the
+             * hysteresis: otherwise a control could stop one step before them
+             * (also for a badge that reads the I2C registers when MIDI arrives
+             * on the UART).
+             */
+            if (diff > HYSTERESIS || (diff != 0 && (new_adc == 0 || new_adc == MIDI_MAX)))
             {
                 /* ADC value changed enough to report; send a CC message */
                 USBSendControlChange(MIDI_CHANNEL, base_note_adc[i], MIDI_MAX - new_adc);
