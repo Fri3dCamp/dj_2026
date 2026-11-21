@@ -15,6 +15,9 @@ Please check the [schematics](TODO:local_link) to get more details about how the
 ### UART
 
 The DJ addon sends MIDI CC messages through the UART port to the badge at a baudrate of `115200 8N1`.
+It sends a message on every change of a button, potmeter, fader or encoder, so a badge that reads the inputs over I2C
+can use the incoming UART data as a trigger to read them, instead of polling. The UART output is always on in release
+builds (debug builds use the UART for their debug output).
 
 ### I2C
 
@@ -36,6 +39,13 @@ The DJ addon has I2C address `0x3A` and uses the following registers to interfac
 | 0x16 | Encoder: left | R | 2 | Reports the left encoder value (0-127) |
 | 0x18 | Encoder: right | R | 2 | Reports the right encoder value (0-127) |
 | 0x1A | Button RGB Leds | R/W | 24 | The RGB value of the button leds (0-255) |
+| 0x32 | Configuration | R/W | 1 | Configuration flags (see below) |
+
+The configuration register has these bits:
+
+| Bit | Name | Default | Description |
+|-|-|-|-|
+| 0 | remap | 0 | Write 1 to disable I2C and give its pins back to SWD, so the addon can be reflashed |
 
 ## Building
 

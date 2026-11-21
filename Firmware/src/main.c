@@ -14,6 +14,8 @@
  *   2. I2C slave (address 0x3A, bus speed 400kHz)
  *      - Master can read a register map containing all sensor values.
  *      - Master can write LED color data into the writable region.
+ *      - Master can write a trailing configuration byte: its "remap" bit
+ *        gives SDA/SCL back to SWD for reflashing.
  *
  *   3. UART
  *      - Sends and receives the same MIDI packets as on USB
@@ -167,6 +169,14 @@
  */
 #define HYSTERESIS (1)
 
+/* Raw ADC counts ignored at both ends of the potmeter and fader range for
+ * MIDI: some do not reach the extreme ADC values (a crossfader stops about 95
+ * counts from an end, a potmeter about 60), so their MIDI value would never
+ * reach 0 or 127. The I2C registers keep the raw values.
+ */
+#define ADC_DEAD_ZONE (128)
+#define ADC_MAX       (4095)
+
 /* midi-usb */
 #define MIDI_CHANNEL (0)    /* MIDI channel 1 (0-indexed) */
 #define MIDI_MAX     (0x7f) /* maximum value for a 7-bit MIDI data byte */
@@ -200,11 +210,13 @@
 
 /*
  * Bytes at offset < RESULT_RW_OFFSET are read-only.
- * Writing starts at RESULT_RW_OFFSET (the LED region).
- * Total size = RESULT_BUFFER_SIZE = 50 bytes.
+ * Writing starts at RESULT_RW_OFFSET (the LED region), which extends through
+ * the trailing configuration byte at RESULT_CONFIG_OFFSET.
+ * Total size = RESULT_BUFFER_SIZE = 51 bytes.
  */
-#define RESULT_BUFFER_SIZE (3 + 1 + (ADC_CHANNELS * 2) + 2 + 2 + (LEDS_NUM * 3))
-#define RESULT_RW_OFFSET   (3 + 1 + (ADC_CHANNELS * 2) + 2 + 2) /* first writable byte offset */
+#define RESULT_BUFFER_SIZE   (3 + 1 + (ADC_CHANNELS * 2) + 2 + 2 + (LEDS_NUM * 3) + 1)
+#define RESULT_RW_OFFSET     (3 + 1 + (ADC_CHANNELS * 2) + 2 + 2) /* first writable byte offset */
+#define RESULT_CONFIG_OFFSET (RESULT_RW_OFFSET + (LEDS_NUM * 3))  /* configuration byte offset */
 
 /* CC number per ADC channel, in the order of the ADC ranks (adc_channels[i] is rank i + 1) */
 static const uint8_t base_note_adc[ADC_CHANNELS] = {
@@ -280,6 +292,7 @@ static const ws2812b_color_t mixxx_palette[] = {
  *   0x16     2    Left encoder counter as uint16_t        (READ-ONLY)
  *   0x18     2    Right encoder counter as uint16_t       (READ-ONLY)
  *   0x1A    24    LED data: 8 × {G, R, B}                 (READ-WRITE)
+ *   0x32     1    Configuration flags (bit 0: remap)      (READ-WRITE)
  *
  * Packed struct that maps directly onto the I2C register map.
  * __attribute__((packed)) ensures no padding bytes are inserted,
@@ -293,6 +306,8 @@ typedef struct __attribute__((packed))
     uint16_t left_encoder;               /* quadrature counter for left encoder (wraps 0–MIDI_MAX) */
     uint16_t right_encoder;              /* quadrature counter for right encoder (wraps 0–MIDI_MAX) */
     ws2812b_color_t leds[LEDS_NUM];      /* current LED colors in GRB order (writable via I2C) */
+    uint8_t remap : 1;                   /* write 1 to disable I2C1 and give the SDA/SCL pins back to SWD, so the board can be reflashed */
+    uint8_t reserved : 7;                /* reserved */
 } addon_data_t;
 
 /* Compile-time check: the struct layout must match the register map exactly */
@@ -301,18 +316,23 @@ _Static_assert(sizeof(addon_data_t) == RESULT_BUFFER_SIZE, "raw data and struct 
 /*
  * Global firmware state.
  * Flags are set by interrupt handlers and consumed by the main loop.
+ *
+ * Every flag has its own byte: writing a byte is a single store, while
+ * writing a bitfield is a read-modify-write of the whole byte that can
+ * overwrite a flag set by an interrupt in between. They are volatile because
+ * the main loop polls flags that are set by interrupt handlers.
  * The union lets I2C code treat the structured data as a flat byte array
  * for simple indexed access using raw_data_ptr.
  */
 typedef struct
 {
-    uint8_t flag_update_leds : 1;       /* set when LED data has changed and w2812_sync() must be called */
-    uint8_t flag_matrix_scan_done : 1;  /* set when the button matrix state has been updated */
-    uint8_t flag_slave_first_write : 1; /* set on every ADDR phase; the next RXNE byte is the register offset. */
-    uint8_t reserved : 5;               /* reserved for future use */
-    uint8_t slave_offset;               /* register offset captured after the most recent ADDR+W. */
-    uint8_t slave_position;             /* current read/write cursor, reset to offset on every ADDR (including repeated-START), so write-then-read works without special-casing. */
-    uint8_t unused;                     /* unused byte to make the data 4 byte aligned */
+    volatile uint8_t flag_update_leds;       /* set when LED data has changed and w2812_sync() must be called */
+    volatile uint8_t flag_matrix_scan_done;  /* set when the button matrix state has been updated */
+    volatile uint8_t flag_slave_first_write; /* set on every ADDR phase; the next RXNE byte is the register offset. */
+    volatile uint8_t flag_config_changed;    /* set when the configuration byte has been written through I2C */
+    uint8_t slave_offset;                    /* register offset captured after the most recent ADDR+W. */
+    uint8_t slave_position;                  /* current read/write cursor, reset to offset on every ADDR (including repeated-START), so write-then-read works without special-casing. */
+    uint8_t unused[2];                       /* unused bytes to make the data 4 byte aligned */
     union
     {
         addon_data_t data;                    /* structured access to the register map */
@@ -379,6 +399,7 @@ static void USART3_Output_Init(uint32_t baudrate)
     USART_Init(USART3, &USART_InitStructure);
     USART_Cmd(USART3, ENABLE);
 }
+
 
 /*
  * Encode one byte of WS2812 data into 4 SPI bytes.
@@ -610,8 +631,9 @@ static void Scratch_Left_Encoder_Init(void)
  *     1st byte after address+W  = register offset → latched in slave_offset.
  *     Subsequent payload bytes  = written into raw_data[] at slave_position
  *                                 only if slave_position >= RESULT_RW_OFFSET
- *                                 (the writable LED region). Read-only bytes
- *                                 are silently discarded.
+ *                                 (the writable LED region, followed by the
+ *                                 configuration byte at RESULT_CONFIG_OFFSET).
+ *                                 Read-only bytes are silently discarded.
  *     STOP: flag cleared so the peripheral is ready for the next transaction.
  *
  *   READ transaction (master ← slave), typically after a write to set the offset:
@@ -682,9 +704,16 @@ static void i2c_slave_process(void)
             {
                 if (state.slave_position >= RESULT_RW_OFFSET)
                 {
-                    /* Writable region (LED data): store the byte and notify the main loop. */
+                    /* Writable region: store the byte and notify the main loop. */
                     state.raw_data[state.slave_position] = byte;
-                    state.flag_update_leds = 1;
+                    if (state.slave_position == RESULT_CONFIG_OFFSET)
+                    {
+                        state.flag_config_changed = 1;
+                    }
+                    else
+                    {
+                        state.flag_update_leds = 1;
+                    }
                 }
             }
             state.slave_position++;
@@ -1367,6 +1396,27 @@ static void handle_midi(uint8_t cin, uint8_t b1, uint8_t b2, uint8_t b3)
 }
 
 /*
+ * Scale a raw 12-bit ADC value to 7-bit MIDI, without the dead zone at both
+ * ends of the range (ADC_DEAD_ZONE).
+ */
+static uint8_t adc_to_midi(uint16_t raw)
+{
+    int32_t value = (int32_t)raw - ADC_DEAD_ZONE;
+
+    if (value < 0)
+    {
+        value = 0;
+    }
+    value = value * ADC_MAX / (ADC_MAX - 2 * ADC_DEAD_ZONE);
+    if (value > ADC_MAX)
+    {
+        value = ADC_MAX;
+    }
+
+    return value >> 5;
+}
+
+/*
  * Main entry point.
  *
  * Initializes all peripherals, then runs the main event loop forever.
@@ -1554,13 +1604,18 @@ int main(void)
          */
         for (int i = 0; i < ADC_CHANNELS; i++)
         {
-            /* Scale the 12-bit ADC value to the 7-bit MIDI range.
-             * >>5 converts 0–4095 to 0–127.
+            /* Scale the 12-bit ADC value to the 7-bit MIDI range, without the
+             * dead zone at both ends (adc_to_midi()).
              * The transmitted value is inverted so fully clockwise = maximum.
              */
-            uint8_t new_adc = state.data.adc_channels[i] >> 5;
+            uint8_t new_adc = adc_to_midi(state.data.adc_channels[i]);
             uint8_t diff = (adc_previous_results[i] > new_adc) ? (adc_previous_results[i] - new_adc) : (new_adc - adc_previous_results[i]);
-            if (diff > HYSTERESIS)
+            /* The ends are always reported, also when they are within the
+             * hysteresis: otherwise a control could stop one step before them
+             * (also for a badge that reads the I2C registers when MIDI arrives
+             * on the UART).
+             */
+            if (diff > HYSTERESIS || (diff != 0 && (new_adc == 0 || new_adc == MIDI_MAX)))
             {
                 /* ADC value changed enough to report; send a CC message */
                 USBSendControlChange(MIDI_CHANNEL, base_note_adc[i], MIDI_MAX - new_adc);
@@ -1594,6 +1649,27 @@ int main(void)
         if (previous_kb_result != current_kb_result)
         {
             previous_kb_result = current_kb_result;
+        }
+
+        /* I2C master wrote a new value to the configuration byte: apply it now. */
+        if (state.flag_config_changed)
+        {
+            state.flag_config_changed = 0;
+
+            if (state.data.remap)
+            {
+                PRINT("Remap SWD trigger\r\n");
+                Delay_Ms(100);
+
+                /* disable I2C interrupts */
+                I2C_ITConfig(I2C1, I2C_IT_EVT | I2C_IT_ERR | I2C_IT_BUF, DISABLE);
+
+                /* disable I2C1 */
+                I2C_Cmd(I2C1, DISABLE);
+
+                /* Re-enable DIO (SWD) interface on these pins */
+                GPIO_PinRemapConfig(GPIO_Remap_SWJ_Disable, DISABLE);
+            }
         }
     }
 }
