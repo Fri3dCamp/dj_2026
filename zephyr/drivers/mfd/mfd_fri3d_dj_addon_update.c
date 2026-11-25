@@ -6,7 +6,7 @@
  * Firmware update of the Fri3d Camp 2026 DJ add-on over RVSWD
  * (CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE): the add-on gives its I2C pins to SWD
  * on request (remap), the zephyr-rvswd module programs it, and the pins go
- * back to I2C. Also the bundled image and its installation at boot.
+ * back to I2C. Also the bundled image.
  */
 
 #define DT_DRV_COMPAT fri3d_dj_addon
@@ -27,9 +27,8 @@ LOG_MODULE_DECLARE(mfd_fri3d_dj_addon, CONFIG_MFD_LOG_LEVEL);
 /* After the reset into the new firmware: I2C starts after one second */
 #define RESTART_TIMEOUT_MS 4000
 
-/* successful updates since boot, and whether the one at boot was one (for the shell) */
+/* successful updates since boot (for the shell) */
 static unsigned int mfd_fri3d_dj_addon_updates;
-static bool mfd_fri3d_dj_addon_updated_at_boot;
 
 static int mfd_fri3d_dj_addon_program(const struct device *dev, const void *image, size_t len,
 				      mfd_fri3d_dj_addon_progress_cb_t cb, void *user_data)
@@ -146,10 +145,11 @@ void mfd_fri3d_dj_addon_set_update_callbacks(const struct device *dev,
 static const uint8_t mfd_fri3d_dj_addon_firmware[] = {
 #include "fri3d_dj_addon_firmware.inc"
 };
+#endif /* FRI3D_DJ_ADDON_HAS_FIRMWARE */
 
-/* Version of the bundled firmware from CONFIG_MFD_FRI3D_DJ_ADDON_FIRMWARE_VERSION */
-static void mfd_fri3d_dj_addon_bundled_version(uint8_t version[3])
+int mfd_fri3d_dj_addon_get_bundled_version(uint8_t version[3])
 {
+#ifdef FRI3D_DJ_ADDON_HAS_FIRMWARE
 	const char *p = CONFIG_MFD_FRI3D_DJ_ADDON_FIRMWARE_VERSION;
 
 	for (int i = 0; i < 3; i++) {
@@ -158,9 +158,14 @@ static void mfd_fri3d_dj_addon_bundled_version(uint8_t version[3])
 		version[i] = strtoul(p, &end, 10);
 		p = *end == '.' ? end + 1 : end;
 	}
-}
 
-#endif /* FRI3D_DJ_ADDON_HAS_FIRMWARE */
+	return 0;
+#else
+	ARG_UNUSED(version);
+
+	return -ENOENT;
+#endif
+}
 
 int mfd_fri3d_dj_addon_update_bundled(const struct device *dev,
 				      mfd_fri3d_dj_addon_progress_cb_t cb, void *user_data)
@@ -181,50 +186,8 @@ void mfd_fri3d_dj_addon_get_update_info(struct mfd_fri3d_dj_addon_update_info *i
 {
 	*info = (struct mfd_fri3d_dj_addon_update_info){
 		.updates = mfd_fri3d_dj_addon_updates,
-		.updated_at_boot = mfd_fri3d_dj_addon_updated_at_boot,
 	};
 #ifdef FRI3D_DJ_ADDON_HAS_FIRMWARE
 	info->bundled_len = sizeof(mfd_fri3d_dj_addon_firmware);
-	mfd_fri3d_dj_addon_bundled_version(info->bundled_version);
 #endif
 }
-
-#ifdef CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE_AT_BOOT
-/*
- * At init: install the bundled firmware when the add-on runs an older version,
- * or does not answer at all (no firmware). Debug builds report 255.255.255
- * and are left alone.
- */
-int mfd_fri3d_dj_addon_update_at_boot(const struct device *dev, int answered)
-{
-#ifdef FRI3D_DJ_ADDON_HAS_FIRMWARE
-	struct mfd_fri3d_dj_addon_data *data = dev->data;
-	uint8_t bundled[3];
-
-	mfd_fri3d_dj_addon_bundled_version(bundled);
-
-	if (answered == 0) {
-		if (memcmp(data->version, bundled, sizeof(bundled)) >= 0) {
-			return 0;
-		}
-		LOG_INF("%s: firmware v%u.%u.%u is older than v%u.%u.%u, updating", dev->name,
-			data->version[0], data->version[1], data->version[2], bundled[0],
-			bundled[1], bundled[2]);
-	} else {
-		LOG_WRN("%s: no answer, installing firmware v%u.%u.%u", dev->name, bundled[0],
-			bundled[1], bundled[2]);
-	}
-
-	if (mfd_fri3d_dj_addon_update_bundled(dev, NULL, NULL) != 0) {
-		return -EIO;
-	}
-	mfd_fri3d_dj_addon_updated_at_boot = true;
-
-	return 0;
-#else
-	ARG_UNUSED(dev);
-
-	return answered;
-#endif
-}
-#endif /* CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE_AT_BOOT */

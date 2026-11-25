@@ -172,10 +172,7 @@ typedef void (*mfd_fri3d_dj_addon_post_update_cb_t)(const struct device *dev, in
 /**
  * @brief Set the callbacks around a firmware update (one pair per device).
  *
- * Needs CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE. Both are optional (NULL). For the
- * update at boot (CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE_AT_BOOT), set them before
- * the device initializes, e.g. from SYS_INIT() at POST_KERNEL with a lower
- * priority than CONFIG_MFD_FRI3D_DJ_ADDON_INIT_PRIORITY.
+ * Needs CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE. Both are optional (NULL).
  *
  * @param dev DJ add-on MFD device.
  * @param pre Called before the SWD traffic starts.
@@ -213,6 +210,56 @@ void mfd_fri3d_dj_addon_set_update_callbacks(const struct device *dev,
  */
 int mfd_fri3d_dj_addon_update(const struct device *dev, const void *image, size_t len,
 			      mfd_fri3d_dj_addon_progress_cb_t cb, void *user_data);
+
+/**
+ * @brief Get the version of the bundled firmware image.
+ *
+ * The image comes from CONFIG_MFD_FRI3D_DJ_ADDON_FIRMWARE, its version from
+ * CONFIG_MFD_FRI3D_DJ_ADDON_FIRMWARE_VERSION. Together with
+ * mfd_fri3d_dj_addon_get_version() an application can keep the add-on on the
+ * bundled version, e.g. at start:
+ *
+ * @code{.c}
+ * uint8_t running[3], bundled[3];
+ *
+ * if (mfd_fri3d_dj_addon_get_bundled_version(bundled) == 0) {
+ *         if (device_is_ready(dev)) {
+ *                 mfd_fri3d_dj_addon_get_version(dev, running);
+ *         }
+ *         if (!device_is_ready(dev) || memcmp(running, bundled, sizeof(bundled)) < 0) {
+ *                 mfd_fri3d_dj_addon_update_bundled(dev, NULL, NULL);
+ *         }
+ * }
+ * @endcode
+ *
+ * An add-on without firmware does not answer and its device does not
+ * initialize; the update still installs firmware on it (restart afterwards).
+ * Debug builds of the add-on firmware report 255.255.255, so they are left
+ * alone. Needs CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE.
+ *
+ * @param version Buffer for major, minor and patch.
+ *
+ * @retval 0 Success.
+ * @retval -ENOENT No bundled image.
+ */
+int mfd_fri3d_dj_addon_get_bundled_version(uint8_t version[3]);
+
+/**
+ * @brief Program the bundled firmware image into the add-on.
+ *
+ * As mfd_fri3d_dj_addon_update() with the image of
+ * CONFIG_MFD_FRI3D_DJ_ADDON_FIRMWARE. Needs CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE.
+ *
+ * @param dev DJ add-on MFD device.
+ * @param cb Progress callback, or NULL.
+ * @param user_data Passed to @p cb.
+ *
+ * @retval 0 Success: the add-on runs the bundled firmware.
+ * @retval -ENOENT No bundled image.
+ * @retval <0 As mfd_fri3d_dj_addon_update().
+ */
+int mfd_fri3d_dj_addon_update_bundled(const struct device *dev,
+				      mfd_fri3d_dj_addon_progress_cb_t cb, void *user_data);
 
 #ifdef __cplusplus
 }

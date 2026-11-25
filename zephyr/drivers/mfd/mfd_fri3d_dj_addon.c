@@ -225,9 +225,6 @@ static int mfd_fri3d_dj_addon_init(const struct device *dev)
 
 	/* After a power-on the add-on's firmware waits a second before it enables I2C */
 	ret = mfd_fri3d_dj_addon_wait(dev, sys_timepoint_calc(K_MSEC(config->boot_timeout_ms)));
-#ifdef CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE_AT_BOOT
-	ret = mfd_fri3d_dj_addon_update_at_boot(dev, ret);
-#endif
 	if (ret != 0) {
 		LOG_ERR("%s: no answer from the add-on", dev->name);
 		return -ENODEV;

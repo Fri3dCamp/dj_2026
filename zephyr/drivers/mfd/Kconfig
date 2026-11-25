@@ -55,18 +55,11 @@ config MFD_FRI3D_DJ_ADDON_FIRMWARE
 config MFD_FRI3D_DJ_ADDON_FIRMWARE_VERSION
 	string "Version of the bundled firmware image"
 	default "0.0.0"
-
-config MFD_FRI3D_DJ_ADDON_UPDATE_AT_BOOT
-	bool "Install the bundled image at boot when the add-on runs an older version"
 	help
-	  Like the badge coprocessor's update at boot: at init, if the add-on
-	  reports an older version than MFD_FRI3D_DJ_ADDON_FIRMWARE_VERSION, or
-	  does not answer at all (e.g. no firmware), install the bundled image.
-	  Debug builds of the add-on firmware report 255.255.255 and are left
-	  alone. Takes about 10 seconds during init. The update callbacks
-	  (mfd_fri3d_dj_addon_set_update_callbacks()) must be set before the
-	  device initializes. The bundled version must match the image, or the
-	  add-on is updated at every start.
+	  Version of the image in MFD_FRI3D_DJ_ADDON_FIRMWARE, as
+	  major.minor.patch. Applications compare it with the add-on's version
+	  (mfd_fri3d_dj_addon_get_bundled_version()) to decide on an update; it
+	  must match the image.
 
 endif # MFD_FRI3D_DJ_ADDON_UPDATE
 

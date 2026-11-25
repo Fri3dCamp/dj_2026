@@ -55,28 +55,14 @@ struct mfd_fri3d_dj_addon_data {
 /* Wait until the add-on answers on I2C, and read its version */
 int mfd_fri3d_dj_addon_wait(const struct device *dev, k_timepoint_t timeout);
 
-/*
- * At init, with CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE_AT_BOOT: install the bundled
- * firmware when the add-on runs an older one or does not answer (answered:
- * the result of waiting for it). Returns 0 when it answers now.
- */
-int mfd_fri3d_dj_addon_update_at_boot(const struct device *dev, int answered);
-
 /* What the update code holds, for the shell (CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE) */
 struct mfd_fri3d_dj_addon_update_info {
 	/* bundled image (CONFIG_MFD_FRI3D_DJ_ADDON_FIRMWARE): size, 0 without one */
 	size_t bundled_len;
-	uint8_t bundled_version[3];
 	/* successful updates since boot */
 	unsigned int updates;
-	/* the update at boot installed the bundled image */
-	bool updated_at_boot;
 };
 
 void mfd_fri3d_dj_addon_get_update_info(struct mfd_fri3d_dj_addon_update_info *info);
-
-/* Install the bundled image: -ENOENT without one */
-int mfd_fri3d_dj_addon_update_bundled(const struct device *dev,
-				      mfd_fri3d_dj_addon_progress_cb_t cb, void *user_data);
 
 #endif /* ZEPHYR_DRIVERS_MFD_MFD_FRI3D_DJ_ADDON_PRIV_H_ */
