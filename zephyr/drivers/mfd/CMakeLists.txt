@@ -5,6 +5,16 @@
 zephyr_library_amend(${ZEPHYR_CURRENT_MODULE_DIR}/zephyr)
 zephyr_library_sources_ifdef(CONFIG_MFD_FRI3D_DJ_ADDON mfd_fri3d_dj_addon.c)
 
+# The update uses the zephyr-rvswd module (west project, module name rvswd)
+if(CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE AND NOT CONFIG_RVSWD_CH32X03X)
+  if(NOT ZEPHYR_RVSWD_MODULE_DIR)
+    message(FATAL_ERROR "CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE needs the zephyr-rvswd module: "
+            "add github.com/bertouttier/zephyr-rvswd to the west manifest")
+  endif()
+  message(FATAL_ERROR "CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE needs an enabled wch,rvswd node "
+          "as the add-on's rvswd property")
+endif()
+
 # DJ add-on firmware image to link in (CONFIG_MFD_FRI3D_DJ_ADDON_FIRMWARE)
 if(CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE AND NOT CONFIG_MFD_FRI3D_DJ_ADDON_FIRMWARE STREQUAL "")
   get_filename_component(fri3d_dj_addon_fw ${CONFIG_MFD_FRI3D_DJ_ADDON_FIRMWARE} ABSOLUTE

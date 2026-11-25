@@ -24,13 +24,16 @@ config MFD_FRI3D_DJ_ADDON_INIT_PRIORITY
 
 config MFD_FRI3D_DJ_ADDON_UPDATE
 	bool "DJ add-on firmware update over RVSWD"
-	default y
-	depends on MFD_FRI3D_DJ_ADDON && RVSWD_CH32X03X
+	depends on MFD_FRI3D_DJ_ADDON
 	help
 	  Update the add-on firmware with mfd_fri3d_dj_addon_update(), through
 	  the RVSWD interface of the add-on's rvswd property: firmware with the
 	  configuration register gives its I2C pins to SWD on request, older
-	  firmware only during the first second after it powers up.
+	  firmware only during the first second after it powers up. Needs the
+	  zephyr-rvswd module (github.com/bertouttier/zephyr-rvswd) in the
+	  west workspace and an enabled wch,rvswd node as the add-on's rvswd
+	  property (<fri3d/dj_addon.dtsi> has it); the build stops if either is
+	  missing.
 
 if MFD_FRI3D_DJ_ADDON_UPDATE
 
