@@ -16,13 +16,16 @@ if(CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE AND NOT CONFIG_RVSWD_CH32X03X)
           "as the add-on's rvswd property")
 endif()
 
-# DJ add-on firmware image to link in (CONFIG_MFD_FRI3D_DJ_ADDON_FIRMWARE)
+# DJ add-on firmware image to link in (CONFIG_MFD_FRI3D_DJ_ADDON_FIRMWARE). Without one
+# the update API stays: the application can get an image some other way.
 if(CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE AND NOT CONFIG_MFD_FRI3D_DJ_ADDON_FIRMWARE STREQUAL "")
   get_filename_component(fri3d_dj_addon_fw ${CONFIG_MFD_FRI3D_DJ_ADDON_FIRMWARE} ABSOLUTE
                          BASE_DIR ${APPLICATION_SOURCE_DIR})
-  if(NOT EXISTS ${fri3d_dj_addon_fw})
-    message(FATAL_ERROR "CONFIG_MFD_FRI3D_DJ_ADDON_FIRMWARE: ${fri3d_dj_addon_fw} not found")
-  endif()
+endif()
+if(fri3d_dj_addon_fw AND NOT EXISTS ${fri3d_dj_addon_fw})
+  message(WARNING "CONFIG_MFD_FRI3D_DJ_ADDON_FIRMWARE: ${fri3d_dj_addon_fw} not found, "
+          "building without a bundled image")
+elseif(fri3d_dj_addon_fw)
   generate_inc_file_for_target(${ZEPHYR_CURRENT_LIBRARY} ${fri3d_dj_addon_fw}
                                ${ZEPHYR_BINARY_DIR}/include/generated/fri3d_dj_addon_firmware.inc)
   zephyr_library_compile_definitions(FRI3D_DJ_ADDON_HAS_FIRMWARE)
