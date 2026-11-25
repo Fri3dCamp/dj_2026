@@ -1,0 +1,76 @@
+# Copyright (c) 2026 Bert Outtier <outtierbert@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  DJ add-on of the Fri3d Camp 2026 badge on the expansion connector: a
+  CH32X035 running the dj_2026 firmware as an I2C slave (address 0x3A) with
+  8 buttons, 6 potmeters, 3 faders, 2 encoders and 8 RGB LEDs.
+
+  The add-on firmware (a release build) sends MIDI on its UART on every input
+  change: the driver reads the inputs over I2C when data arrives on the UART,
+  it does not poll them. The add-on is optional: the driver looks for it for
+  connect-timeout-ms after boot (plugging it in or out at runtime is not
+  supported). It needs add-on firmware v1.0.4 or later (consistent 16-bit
+  registers). The functions are child nodes, see <fri3d/dj_addon.dtsi>:
+
+    dj_addon: dj-addon@3a {
+        compatible = "fri3d,dj-addon";
+        reg = <0x3a>;
+        uart = <&uart0>;
+
+        dj_addon_input: input {
+            compatible = "fri3d,dj-addon-input";
+            button-codes = <...>;
+            analog-codes = <...>;
+            encoder-codes = <...>;
+        };
+
+        dj_addon_leds: leds {
+            compatible = "fri3d,dj-addon-led-strip";
+        };
+    };
+
+compatible: "fri3d,dj-addon"
+
+include: i2c-device.yaml
+
+properties:
+  uart:
+    type: phandle
+    required: true
+    description: |
+      UART that receives the add-on's MIDI output (115200 baud, expansion
+      connector pin 3, badge IO44). Data on it triggers a read of the inputs;
+      the driver discards it and does not transmit.
+
+  rvswd:
+    type: phandle
+    description: |
+      RVSWD interface (wch,rvswd) on the add-on's I2C pins (the expansion I2C
+      bus), to update its firmware (CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE).
+
+  update-power-domain:
+    type: phandle
+    description: |
+      Power domain (power-domain-gpio) of the other devices on the expansion
+      I2C bus, 3V3_AUX on the badge. It is switched off while the add-on is
+      updated, so they do not see the SWD traffic; the add-on itself has its
+      own supply. Their drivers are not initialized again afterwards: restart.
+
+  poll-period-ms:
+    type: int
+    default: 10
+    description: Minimum time between two reads of the inputs.
+
+  probe-period-ms:
+    type: int
+    default: 500
+    description: |
+      Period to look for the add-on after boot and after a firmware update.
+
+  connect-timeout-ms:
+    type: int
+    default: 3000
+    description: |
+      How long to look for the add-on after boot and after a firmware update.
+      Its firmware answers on I2C one second after it starts.

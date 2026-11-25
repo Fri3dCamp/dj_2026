@@ -1,0 +1,21 @@
+# Copyright (c) 2026 Bert Outtier <outtierbert@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
+if INPUT
+
+config INPUT_FRI3D_DJ_ADDON
+	bool "Fri3d Camp 2026 DJ add-on controls"
+	default y
+	depends on DT_HAS_FRI3D_DJ_ADDON_INPUT_ENABLED
+	depends on MULTITHREADING # the MFD uses work items
+	select MFD
+	help
+	  Buttons, potmeters, faders and encoders of the Fri3d Camp 2026 DJ
+	  add-on.
+
+config INPUT_FRI3D_DJ_ADDON_INIT_PRIORITY
+	int "Initialization priority"
+	default INPUT_INIT_PRIORITY
+	depends on INPUT_FRI3D_DJ_ADDON
+
+endif # INPUT

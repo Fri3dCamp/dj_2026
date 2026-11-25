@@ -1,0 +1,64 @@
+# Copyright (c) 2026 Bert Outtier <outtierbert@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
+if MFD
+
+config MFD_FRI3D_DJ_ADDON
+	bool "Fri3d Camp 2026 DJ add-on"
+	default y
+	depends on DT_HAS_FRI3D_DJ_ADDON_ENABLED
+	depends on MULTITHREADING # the MFD uses work items
+	depends on SERIAL # the add-on's UART output triggers the reads
+	select I2C
+	select UART_INTERRUPT_DRIVEN
+	help
+	  Multi-function device driver for the CH32X035 of the Fri3d Camp
+	  2026 DJ add-on on the expansion connector.
+
+config MFD_FRI3D_DJ_ADDON_INIT_PRIORITY
+	int "DJ add-on initialization priority"
+	default MFD_INIT_PRIORITY
+	depends on MFD_FRI3D_DJ_ADDON
+	help
+	  Must be after the I2C controller and GPIO drivers.
+
+config MFD_FRI3D_DJ_ADDON_UPDATE
+	bool "DJ add-on firmware update over RVSWD"
+	default y
+	depends on MFD_FRI3D_DJ_ADDON && RVSWD_CH32X03X
+	help
+	  Update the add-on firmware with mfd_fri3d_dj_addon_update(), through
+	  the RVSWD interface of the add-on's rvswd property: firmware with the
+	  configuration register gives its I2C pins to SWD on request, older
+	  firmware only during the first second after it powers up.
+
+if MFD_FRI3D_DJ_ADDON_UPDATE
+
+config MFD_FRI3D_DJ_ADDON_FIRMWARE
+	string "DJ add-on firmware image to bundle"
+	help
+	  Path to a DJ add-on firmware binary (dj_2026 release build), absolute
+	  or relative to the application directory, to link into the
+	  application. Empty: no image. With an image, the "djaddon update"
+	  shell command installs it.
+
+config MFD_FRI3D_DJ_ADDON_FIRMWARE_VERSION
+	string "Version of the bundled firmware image"
+	default "0.0.0"
+
+config MFD_FRI3D_DJ_ADDON_UPDATE_ON_CONNECT
+	bool "Install the bundled image when an add-on with an older version connects"
+	help
+	  When an add-on with an older firmware version than
+	  MFD_FRI3D_DJ_ADDON_FIRMWARE_VERSION connects, install the bundled
+	  image, once per boot. Only firmware v1.0.4 and later gives its pins to
+	  SWD while it runs; older firmware is left alone (update it with the
+	  "djaddon update <seconds>" shell command and plug it in again). Debug
+	  builds (255.255.255) are left alone too. Takes about 10 seconds, on
+	  the system work queue; the main I2C bus is unavailable meanwhile. The
+	  bundled version must match the image, or the add-on is updated at
+	  every start.
+
+endif # MFD_FRI3D_DJ_ADDON_UPDATE
+
+endif # MFD

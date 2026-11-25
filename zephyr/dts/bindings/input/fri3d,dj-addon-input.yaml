@@ -1,0 +1,50 @@
+# Copyright (c) 2026 Bert Outtier <outtierbert@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Controls of the Fri3d Camp 2026 DJ add-on, as input events: the buttons as
+  INPUT_EV_KEY, the potmeters and faders as INPUT_EV_ABS (0-4095, 0 at the
+  physical minimum) and the encoders as INPUT_EV_REL (steps since the last
+  event).
+
+compatible: "fri3d,dj-addon-input"
+
+include: base.yaml
+
+properties:
+  button-codes:
+    type: array
+    required: true
+    description: |
+      Key codes of the 8 buttons, in the order of the button register bits
+      (bit 0 first). The add-on firmware sends bit i as CC button_note[i]
+      (64 66 65 60 62 61 67 63): CC 60-63 is the top row, 64-67 the bottom
+      row, left to right.
+
+  analog-codes:
+    type: array
+    required: true
+    description: |
+      Axis codes of the 9 analog channels, in register order: left
+      potmeters bottom, middle, top, left fader, right potmeters bottom,
+      middle, top, right fader, crossfader.
+
+  encoder-codes:
+    type: array
+    required: true
+    description: Axis codes of the left and right encoders.
+
+  analog-dead-zone:
+    type: int
+    default: 0
+    description: |
+      Raw counts (12 bit) ignored at both ends of the analog range; the rest
+      is scaled to the full 0-4095, so every potmeter and fader reaches both
+      ends even if it does not reach the extreme ADC values.
+
+  analog-threshold:
+    type: int
+    default: 16
+    description: |
+      Smallest change of an analog channel (12 bit) that is reported, to
+      filter out ADC noise.
