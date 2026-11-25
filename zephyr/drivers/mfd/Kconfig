@@ -22,6 +22,14 @@ config MFD_FRI3D_DJ_ADDON_INIT_PRIORITY
 	help
 	  Must be after the I2C controller and GPIO drivers.
 
+config MFD_FRI3D_DJ_ADDON_SHELL
+	bool "DJ add-on shell commands"
+	default y
+	depends on MFD_FRI3D_DJ_ADDON && SHELL
+	help
+	  The "djaddon" shell command: firmware version, and with a bundled
+	  image (MFD_FRI3D_DJ_ADDON_FIRMWARE) its installation.
+
 config MFD_FRI3D_DJ_ADDON_UPDATE
 	bool "DJ add-on firmware update over RVSWD"
 	depends on MFD_FRI3D_DJ_ADDON

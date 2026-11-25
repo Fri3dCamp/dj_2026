@@ -5,6 +5,7 @@
 zephyr_library_amend(${ZEPHYR_CURRENT_MODULE_DIR}/zephyr)
 zephyr_library_sources_ifdef(CONFIG_MFD_FRI3D_DJ_ADDON mfd_fri3d_dj_addon.c)
 zephyr_library_sources_ifdef(CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE mfd_fri3d_dj_addon_update.c)
+zephyr_library_sources_ifdef(CONFIG_MFD_FRI3D_DJ_ADDON_SHELL mfd_fri3d_dj_addon_shell.c)
 
 # The update uses the zephyr-rvswd module (west project, module name rvswd)
 if(CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE AND NOT CONFIG_RVSWD_CH32X03X)
