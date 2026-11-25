@@ -8,9 +8,8 @@ description: |
 
   The add-on firmware (a release build) sends MIDI on its UART on every input
   change: the driver reads the inputs over I2C when data arrives on the UART,
-  it does not poll them. The add-on is optional: the driver looks for it for
-  connect-timeout-ms after boot (plugging it in or out at runtime is not
-  supported). It needs add-on firmware v1.0.4 or later (consistent 16-bit
+  it does not poll them. The node says the add-on is there: the driver waits
+  boot-timeout-ms for it at init and fails without it (no hotplug). It needs add-on firmware v1.0.4 or later (consistent 16-bit
   registers). The functions are child nodes, see <fri3d/dj_addon.dtsi>:
 
     dj_addon: dj-addon@3a {
@@ -53,3 +52,10 @@ properties:
     type: int
     default: 10
     description: Minimum time between two reads of the inputs.
+
+  boot-timeout-ms:
+    type: int
+    default: 1500
+    description: |
+      Time to wait for the add-on to answer on I2C at init. After a power-on
+      its firmware waits one second before it enables its I2C slave.

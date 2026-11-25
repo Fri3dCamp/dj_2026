@@ -21,6 +21,7 @@ struct mfd_fri3d_dj_addon_config {
 	/* UART that receives the add-on's MIDI output */
 	const struct device *uart;
 	uint32_t poll_period_ms;
+	uint32_t boot_timeout_ms;
 #ifdef CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE
 	/* RVSWD interface on the add-on's I2C pins, or NULL */
 	const struct device *rvswd;
@@ -30,10 +31,9 @@ struct mfd_fri3d_dj_addon_config {
 struct mfd_fri3d_dj_addon_data {
 	const struct device *dev;
 	struct k_work_delayable work;
-	bool connected;
 	/* a firmware update is running: the I2C pins are SWD */
 	bool updating;
-	/* Report the inputs even if they did not change (after connecting) */
+	/* Report the inputs even if they did not change (after init or an update) */
 	bool report;
 	/* data arrived on the UART since the last read started */
 	atomic_t uart_data;
@@ -51,16 +51,15 @@ struct mfd_fri3d_dj_addon_data {
 #endif
 };
 
-/*
- * The add-on's firmware answers on I2C about a second after it powers up: the
- * driver connects to it once this long after boot, and after an update.
- */
-#define MFD_FRI3D_DJ_ADDON_START_MS 1500
+
+/* Wait until the add-on answers on I2C, and read its version */
+int mfd_fri3d_dj_addon_wait(const struct device *dev, k_timepoint_t timeout);
 
 /*
- * An add-on connected, with CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE_ON_CONNECT:
- * install the bundled firmware when it runs an older one (once per boot).
+ * At init, with CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE_AT_BOOT: install the bundled
+ * firmware when the add-on runs an older one or does not answer (answered:
+ * the result of waiting for it). Returns 0 when it answers now.
  */
-void mfd_fri3d_dj_addon_update_on_connect(const struct device *dev);
+int mfd_fri3d_dj_addon_update_at_boot(const struct device *dev, int answered);
 
 #endif /* ZEPHYR_DRIVERS_MFD_MFD_FRI3D_DJ_ADDON_PRIV_H_ */

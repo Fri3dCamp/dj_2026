@@ -27,9 +27,8 @@ config MFD_FRI3D_DJ_ADDON_UPDATE
 	depends on MFD_FRI3D_DJ_ADDON
 	help
 	  Update the add-on firmware with mfd_fri3d_dj_addon_update(), through
-	  the RVSWD interface of the add-on's rvswd property: firmware with the
-	  configuration register gives its I2C pins to SWD on request, older
-	  firmware only during the first second after it powers up. Needs the
+	  the RVSWD interface of the add-on's rvswd property: the firmware
+	  gives its I2C pins to SWD on request (remap). Needs the
 	  zephyr-rvswd module (github.com/bertouttier/zephyr-rvswd) in the
 	  west workspace and an enabled wch,rvswd node as the add-on's rvswd
 	  property (<fri3d/dj_addon.dtsi> has it); the build stops if either is
@@ -49,18 +48,17 @@ config MFD_FRI3D_DJ_ADDON_FIRMWARE_VERSION
 	string "Version of the bundled firmware image"
 	default "0.0.0"
 
-config MFD_FRI3D_DJ_ADDON_UPDATE_ON_CONNECT
-	bool "Install the bundled image when an add-on with an older version connects"
+config MFD_FRI3D_DJ_ADDON_UPDATE_AT_BOOT
+	bool "Install the bundled image at boot when the add-on runs an older version"
 	help
-	  When an add-on with an older firmware version than
-	  MFD_FRI3D_DJ_ADDON_FIRMWARE_VERSION connects, install the bundled
-	  image, once per boot. Only firmware v1.0.4 and later gives its pins to
-	  SWD while it runs; older firmware is left alone (update it with the
-	  "djaddon update <seconds>" shell command and plug it in again). Debug
-	  builds (255.255.255) are left alone too. Takes about 10 seconds, on
-	  the system work queue; the main I2C bus is unavailable meanwhile. The
-	  bundled version must match the image, or the add-on is updated at
-	  every start.
+	  Like the badge coprocessor's update at boot: at init, if the add-on
+	  reports an older version than MFD_FRI3D_DJ_ADDON_FIRMWARE_VERSION, or
+	  does not answer at all (e.g. no firmware), install the bundled image.
+	  Debug builds of the add-on firmware report 255.255.255 and are left
+	  alone. Takes about 10 seconds during init. The update callbacks
+	  (mfd_fri3d_dj_addon_set_update_callbacks()) must be set before the
+	  device initializes. The bundled version must match the image, or the
+	  add-on is updated at every start.
 
 endif # MFD_FRI3D_DJ_ADDON_UPDATE
 

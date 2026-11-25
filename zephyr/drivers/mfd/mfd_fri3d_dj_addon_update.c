@@ -5,8 +5,8 @@
  *
  * Firmware update of the Fri3d Camp 2026 DJ add-on over RVSWD
  * (CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE): the add-on gives its I2C pins to SWD
- * on request, the zephyr-rvswd module programs it, and the pins go back to
- * I2C. Also the bundled image, its installation on connect and the shell.
+ * on request (remap), the zephyr-rvswd module programs it, and the pins go
+ * back to I2C. Also the bundled image, its installation at boot and the shell.
  */
 
 #define DT_DRV_COMPAT fri3d_dj_addon
@@ -22,47 +22,59 @@
 
 LOG_MODULE_DECLARE(mfd_fri3d_dj_addon, CONFIG_MFD_LOG_LEVEL);
 
+/* Delay for the add-on to give its I2C pins to SWD after the remap command */
+#define REMAP_DELAY_MS 200
+/* After the reset into the new firmware: I2C starts after one second */
+#define RESTART_TIMEOUT_MS 4000
+
 /* successful updates since boot (for the shell) */
 static unsigned int mfd_fri3d_dj_addon_updates;
 
-/* Delay for the add-on to give its I2C pins to SWD after the remap command */
-#define REMAP_DELAY_MS 200
-/* Debug module status register: answers when a target is there */
-#define DMSTATUS       0x11
-
-/*
- * Find the add-on on SWD and halt it before it runs any code. A target that
- * just powered up needs the interface reset of rvswd_connect() before it
- * answers, so redo it for every probe.
- */
-static int mfd_fri3d_dj_addon_find(const struct device *rvswd, k_timeout_t wait,
-				   uint32_t vendor[4])
-{
-	k_timepoint_t end = sys_timepoint_calc(wait);
-
-	do {
-		uint32_t status;
-
-		if (rvswd_connect(rvswd) == 0 && rvswd_read(rvswd, DMSTATUS, &status) == 0 &&
-		    ch32_identify(rvswd, vendor) == 0) {
-			return 0;
-		}
-		k_msleep(2);
-	} while (!sys_timepoint_expired(end));
-
-	return -ETIMEDOUT;
-}
-
-int mfd_fri3d_dj_addon_update(const struct device *dev, const void *image, size_t len,
-			      mfd_fri3d_dj_addon_progress_cb_t cb, void *user_data,
-			      k_timeout_t wait)
+static int mfd_fri3d_dj_addon_program(const struct device *dev, const void *image, size_t len,
+				      mfd_fri3d_dj_addon_progress_cb_t cb, void *user_data)
 {
 	const struct mfd_fri3d_dj_addon_config *config = dev->config;
-	struct mfd_fri3d_dj_addon_data *data = dev->data;
-	struct k_work_sync sync;
 	uint32_t vendor[4];
 	const char *chip;
 	int ret;
+
+	ret = rvswd_connect(config->rvswd);
+	if (ret == 0) {
+		/* halts it before it runs any code */
+		ret = ch32_identify(config->rvswd, vendor);
+	}
+	if (ret != 0) {
+		LOG_ERR("%s: no answer on SWD: %d", dev->name, ret);
+		return ret;
+	}
+
+	chip = ch32_chip_name(vendor);
+	if (chip == NULL || strncmp(chip, "CH32X03", 7) != 0) {
+		LOG_ERR("%s: not a CH32X03x (vendor bytes %08x %08x)", dev->name, vendor[0],
+			vendor[1]);
+		ch32_reset_and_run(config->rvswd);
+		return -ENODEV;
+	}
+
+	LOG_INF("%s: programming %s (%zu bytes)", dev->name, chip, len);
+	/* ends with a reset into the new firmware */
+	ret = ch32x03x_program(config->rvswd, image, len, cb, user_data);
+	if (ret != 0) {
+		LOG_ERR("%s: programming failed: %d", dev->name, ret);
+		ch32_reset_and_run(config->rvswd);
+	}
+
+	return ret;
+}
+
+int mfd_fri3d_dj_addon_update(const struct device *dev, const void *image, size_t len,
+			      mfd_fri3d_dj_addon_progress_cb_t cb, void *user_data)
+{
+	const struct mfd_fri3d_dj_addon_config *config = dev->config;
+	struct mfd_fri3d_dj_addon_data *data = dev->data;
+	uint8_t cfg = FRI3D_DJ_ADDON_CONFIG_REMAP;
+	struct k_work_sync sync;
+	int ret, restart;
 
 	if (config->rvswd == NULL) {
 		return -ENOTSUP;
@@ -73,46 +85,24 @@ int mfd_fri3d_dj_addon_update(const struct device *dev, const void *image, size_
 
 	data->updating = true;
 	k_work_cancel_delayable_sync(&data->work, &sync);
-
-	if (data->connected) {
-		uint8_t cfg = FRI3D_DJ_ADDON_CONFIG_REMAP;
-
-		/* firmware with the configuration register gives its pins to SWD */
-		mfd_fri3d_dj_addon_reg_write(dev, FRI3D_DJ_ADDON_REG_CONFIG, &cfg, 1);
-		data->connected = false;
-		if (data->cb != NULL) {
-			data->cb(dev, NULL, data->user_data);
-		}
-		k_msleep(REMAP_DELAY_MS);
+	/* the inputs are unknown until the add-on is back */
+	if (data->cb != NULL) {
+		data->cb(dev, NULL, data->user_data);
 	}
+
+	/*
+	 * The firmware gives its I2C pins to SWD. Without firmware it does not
+	 * answer, and the pins are SWD anyway.
+	 */
+	mfd_fri3d_dj_addon_reg_write(dev, FRI3D_DJ_ADDON_REG_CONFIG, &cfg, 1);
+	k_msleep(REMAP_DELAY_MS);
 
 	/* the application keeps what must not see the SWD traffic away from it */
 	if (data->pre_update != NULL) {
 		data->pre_update(dev, data->update_user_data);
 	}
 
-	ret = mfd_fri3d_dj_addon_find(config->rvswd, wait, vendor);
-	if (ret != 0) {
-		LOG_ERR("%s: no add-on on SWD", dev->name);
-	} else {
-		chip = ch32_chip_name(vendor);
-		if (chip == NULL || strncmp(chip, "CH32X03", 7) != 0) {
-			LOG_ERR("%s: not a CH32X03x (vendor bytes %08x %08x)", dev->name,
-				vendor[0], vendor[1]);
-			ret = -ENODEV;
-		} else {
-			LOG_INF("%s: programming %s (%zu bytes)", dev->name, chip, len);
-			/* ends with a reset into the new firmware */
-			ret = ch32x03x_program(config->rvswd, image, len, cb, user_data);
-			if (ret != 0) {
-				LOG_ERR("%s: programming failed: %d", dev->name, ret);
-			}
-		}
-		if (ret != 0) {
-			ch32_reset_and_run(config->rvswd);
-		}
-	}
-
+	ret = mfd_fri3d_dj_addon_program(dev, image, len, cb, user_data);
 	if (ret == 0) {
 		mfd_fri3d_dj_addon_updates++;
 	}
@@ -122,11 +112,21 @@ int mfd_fri3d_dj_addon_update(const struct device *dev, const void *image, size_
 	if (data->post_update != NULL) {
 		data->post_update(dev, ret, data->update_user_data);
 	}
-	data->updating = false;
-	/* connect again once the firmware is up */
-	k_work_reschedule(&data->work, K_MSEC(MFD_FRI3D_DJ_ADDON_START_MS));
 
-	return ret;
+	restart = mfd_fri3d_dj_addon_wait(dev, sys_timepoint_calc(K_MSEC(RESTART_TIMEOUT_MS)));
+	if (restart == 0) {
+		LOG_INF("%s: firmware v%u.%u.%u", dev->name, data->version[0], data->version[1],
+			data->version[2]);
+	} else {
+		LOG_ERR("%s: no answer after the update", dev->name);
+	}
+
+	data->updating = false;
+	/* report all inputs again */
+	data->report = true;
+	k_work_reschedule(&data->work, K_NO_WAIT);
+
+	return ret != 0 ? ret : restart;
 }
 
 void mfd_fri3d_dj_addon_set_update_callbacks(const struct device *dev,
@@ -142,10 +142,14 @@ void mfd_fri3d_dj_addon_set_update_callbacks(const struct device *dev,
 }
 
 #ifdef FRI3D_DJ_ADDON_HAS_FIRMWARE
+/* the bundled firmware was installed at boot (for the shell) */
+static bool mfd_fri3d_dj_addon_updated_at_boot;
+
 static const uint8_t mfd_fri3d_dj_addon_firmware[] = {
 #include "fri3d_dj_addon_firmware.inc"
 };
 
+/* Version of the bundled firmware from CONFIG_MFD_FRI3D_DJ_ADDON_FIRMWARE_VERSION */
 static void mfd_fri3d_dj_addon_bundled_version(uint8_t version[3])
 {
 	const char *p = CONFIG_MFD_FRI3D_DJ_ADDON_FIRMWARE_VERSION;
@@ -157,62 +161,54 @@ static void mfd_fri3d_dj_addon_bundled_version(uint8_t version[3])
 		p = *end == '.' ? end + 1 : end;
 	}
 }
-#endif
 
-#ifdef CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE_ON_CONNECT
-static void mfd_fri3d_dj_addon_update_work(struct k_work *work)
+static int mfd_fri3d_dj_addon_update_bundled(const struct device *dev,
+					     mfd_fri3d_dj_addon_progress_cb_t cb, void *user_data)
 {
-	const struct device *dev = DEVICE_DT_INST_GET(0);
-
-	ARG_UNUSED(work);
-
-#ifdef FRI3D_DJ_ADDON_HAS_FIRMWARE
-	(void)mfd_fri3d_dj_addon_update(dev, mfd_fri3d_dj_addon_firmware,
-					sizeof(mfd_fri3d_dj_addon_firmware), NULL, NULL, K_NO_WAIT);
-#endif
+	return mfd_fri3d_dj_addon_update(dev, mfd_fri3d_dj_addon_firmware,
+					 sizeof(mfd_fri3d_dj_addon_firmware), cb, user_data);
 }
+#endif /* FRI3D_DJ_ADDON_HAS_FIRMWARE */
 
-static K_WORK_DEFINE(mfd_fri3d_dj_addon_update_work_item, mfd_fri3d_dj_addon_update_work);
-
+#ifdef CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE_AT_BOOT
 /*
- * An add-on with older firmware connected: install the bundled one, once per
- * boot. Only firmware with the remap command (v1.0.4 and later) gives its pins
- * to SWD now: older firmware only does so during the first second after it
- * powers up, and a failed attempt would leave the devices on the bus, which
- * were switched off, without their initialization.
+ * At init: install the bundled firmware when the add-on runs an older version,
+ * or does not answer at all (no firmware). Debug builds report 255.255.255
+ * and are left alone.
  */
-void mfd_fri3d_dj_addon_update_on_connect(const struct device *dev)
+int mfd_fri3d_dj_addon_update_at_boot(const struct device *dev, int answered)
 {
 #ifdef FRI3D_DJ_ADDON_HAS_FIRMWARE
-	static const uint8_t has_remap[3] = {1, 0, 4};
 	struct mfd_fri3d_dj_addon_data *data = dev->data;
-	static bool tried;
 	uint8_t bundled[3];
 
 	mfd_fri3d_dj_addon_bundled_version(bundled);
-	if (tried || memcmp(data->version, bundled, sizeof(bundled)) >= 0) {
-		return;
+
+	if (answered == 0) {
+		if (memcmp(data->version, bundled, sizeof(bundled)) >= 0) {
+			return 0;
+		}
+		LOG_INF("%s: firmware v%u.%u.%u is older than v%u.%u.%u, updating", dev->name,
+			data->version[0], data->version[1], data->version[2], bundled[0],
+			bundled[1], bundled[2]);
+	} else {
+		LOG_WRN("%s: no answer, installing firmware v%u.%u.%u", dev->name, bundled[0],
+			bundled[1], bundled[2]);
 	}
 
-	if (memcmp(data->version, has_remap, sizeof(has_remap)) < 0) {
-		LOG_WRN("%s: firmware v%u.%u.%u is older than v%u.%u.%u; it cannot be updated "
-			"while it runs: use \"djaddon update <seconds>\" and plug it in again",
-			dev->name, data->version[0], data->version[1], data->version[2],
-			bundled[0], bundled[1], bundled[2]);
-		tried = true;
-		return;
+	if (mfd_fri3d_dj_addon_update_bundled(dev, NULL, NULL) != 0) {
+		return -EIO;
 	}
+	mfd_fri3d_dj_addon_updated_at_boot = true;
 
-	tried = true;
-	LOG_INF("%s: firmware v%u.%u.%u is older than v%u.%u.%u, updating", dev->name,
-		data->version[0], data->version[1], data->version[2], bundled[0], bundled[1],
-		bundled[2]);
-	k_work_submit(&mfd_fri3d_dj_addon_update_work_item);
+	return 0;
 #else
 	ARG_UNUSED(dev);
+
+	return answered;
 #endif
 }
-#endif /* CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE_ON_CONNECT */
+#endif /* CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE_AT_BOOT */
 
 #if defined(CONFIG_SHELL) && defined(FRI3D_DJ_ADDON_HAS_FIRMWARE)
 #include <zephyr/shell/shell.h>
@@ -236,45 +232,31 @@ static int cmd_djaddon_version(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 
+	mfd_fri3d_dj_addon_get_version(shell_dj_addon, version);
 	mfd_fri3d_dj_addon_bundled_version(bundled);
-	if (mfd_fri3d_dj_addon_is_connected(shell_dj_addon)) {
-		mfd_fri3d_dj_addon_get_version(shell_dj_addon, version);
-		shell_print(sh, "DJ add-on firmware v%u.%u.%u, bundled v%u.%u.%u (%u bytes), "
-			    "updates since boot: %u",
-			    version[0], version[1], version[2], bundled[0], bundled[1], bundled[2],
-			    (unsigned int)sizeof(mfd_fri3d_dj_addon_firmware),
-			    mfd_fri3d_dj_addon_updates);
-	} else {
-		shell_print(sh, "DJ add-on not connected, bundled v%u.%u.%u (%u bytes)", bundled[0],
-			    bundled[1], bundled[2],
-			    (unsigned int)sizeof(mfd_fri3d_dj_addon_firmware));
-	}
+	shell_print(sh, "DJ add-on firmware v%u.%u.%u, bundled v%u.%u.%u (%u bytes)%s, "
+		    "updates since boot: %u",
+		    version[0], version[1], version[2], bundled[0], bundled[1], bundled[2],
+		    (unsigned int)sizeof(mfd_fri3d_dj_addon_firmware),
+		    mfd_fri3d_dj_addon_updated_at_boot ? ", installed at boot" : "",
+		    mfd_fri3d_dj_addon_updates);
 
 	return 0;
 }
 
 static int cmd_djaddon_update(const struct shell *sh, size_t argc, char **argv)
 {
-	unsigned long wait_s = argc > 1 ? strtoul(argv[1], NULL, 10) : 0;
 	int ret;
 
-	if (wait_s > 0) {
-		shell_print(sh, "plug in the add-on within %lu s (firmware without the remap command)",
-			    wait_s);
-	}
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
 	shell_print(sh, "installing the bundled DJ add-on firmware");
-	ret = mfd_fri3d_dj_addon_update(shell_dj_addon, mfd_fri3d_dj_addon_firmware,
-					sizeof(mfd_fri3d_dj_addon_firmware),
-					mfd_fri3d_dj_addon_shell_progress, (void *)sh,
-					K_SECONDS(wait_s));
+	ret = mfd_fri3d_dj_addon_update_bundled(shell_dj_addon, mfd_fri3d_dj_addon_shell_progress,
+						(void *)sh);
 	if (ret != 0) {
 		shell_error(sh, "update failed: %d", ret);
 		return ret;
-	}
-
-	/* the driver connects again once the firmware is up */
-	for (int i = 0; i < 40 && !mfd_fri3d_dj_addon_is_connected(shell_dj_addon); i++) {
-		k_msleep(100);
 	}
 
 	cmd_djaddon_version(sh, 0, NULL);
@@ -284,9 +266,7 @@ static int cmd_djaddon_update(const struct shell *sh, size_t argc, char **argv)
 
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_djaddon,
 	SHELL_CMD(version, NULL, "Add-on and bundled firmware versions", cmd_djaddon_version),
-	SHELL_CMD_ARG(update, NULL,
-		      "Install the bundled add-on firmware [seconds to wait for a plugged in add-on]",
-		      cmd_djaddon_update, 1, 1),
+	SHELL_CMD(update, NULL, "Install the bundled add-on firmware", cmd_djaddon_update),
 	SHELL_SUBCMD_SET_END);
 
 SHELL_CMD_REGISTER(djaddon, &sub_djaddon, "Fri3d DJ add-on", NULL);

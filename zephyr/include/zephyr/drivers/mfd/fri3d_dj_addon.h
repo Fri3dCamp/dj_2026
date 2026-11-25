@@ -118,12 +118,7 @@ struct mfd_fri3d_dj_addon_stats {
 void mfd_fri3d_dj_addon_get_stats(const struct device *dev, struct mfd_fri3d_dj_addon_stats *stats);
 
 /**
- * @brief Whether the add-on is connected (it answered after boot or after an update).
- */
-bool mfd_fri3d_dj_addon_is_connected(const struct device *dev);
-
-/**
- * @brief Get the firmware version of the add-on, read when it was connected.
+ * @brief Get the firmware version of the add-on, read at init (and after an update).
  *
  * @param dev DJ add-on MFD device.
  * @param version Buffer for major, minor and patch.
@@ -177,7 +172,10 @@ typedef void (*mfd_fri3d_dj_addon_post_update_cb_t)(const struct device *dev, in
 /**
  * @brief Set the callbacks around a firmware update (one pair per device).
  *
- * Needs CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE. Both are optional (NULL).
+ * Needs CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE. Both are optional (NULL). For the
+ * update at boot (CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE_AT_BOOT), set them before
+ * the device initializes, e.g. from SYS_INIT() at POST_KERNEL with a lower
+ * priority than CONFIG_MFD_FRI3D_DJ_ADDON_INIT_PRIORITY.
  *
  * @param dev DJ add-on MFD device.
  * @param pre Called before the SWD traffic starts.
@@ -192,14 +190,12 @@ void mfd_fri3d_dj_addon_set_update_callbacks(const struct device *dev,
 /**
  * @brief Install new add-on firmware over RVSWD.
  *
- * Needs CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE and the rvswd property. Firmware
- * with the configuration register gives its I2C pins (the expansion I2C bus)
- * to SWD on request; older firmware only during the first second after it
- * powers up, so with @p wait the function looks for an add-on that is plugged
- * in that long. The add-on is programmed (every page is read back) and
- * restarts into the new firmware; the pins go back to I2C and the driver
- * connects to it again (input callback with NULL first). The expansion I2C
- * bus is unavailable meanwhile, about 10 seconds for 11 kB. The callbacks of
+ * Needs CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE and the rvswd property. The firmware
+ * gives its I2C pins (the expansion I2C bus) to SWD on request (remap); the
+ * add-on is programmed (every page is read back) and restarts into the new
+ * firmware; the pins go back to I2C and the driver reads its version again
+ * (input callback with NULL first, then all inputs). The expansion I2C bus is
+ * unavailable meanwhile, about 10 seconds for 11 kB. The callbacks of
  * mfd_fri3d_dj_addon_set_update_callbacks() run around the SWD session, e.g.
  * to switch the other devices on the bus off while it runs.
  *
@@ -208,16 +204,15 @@ void mfd_fri3d_dj_addon_set_update_callbacks(const struct device *dev,
  * @param len Image length.
  * @param cb Progress callback, or NULL.
  * @param user_data Passed to the callback.
- * @param wait How long to look for the add-on on SWD.
  * @retval 0 on success.
  * @retval -ENOTSUP without the rvswd property.
- * @retval -ETIMEDOUT if no add-on answered on SWD.
- * @retval -ENODEV if the target is not a CH32X03x.
+ * @retval -ETIMEDOUT if the add-on did not answer on I2C after the update.
+ * @retval -ENODEV if the RVSWD interface is not ready or the target is not a
+ *         CH32X03x.
  * @retval other negative errno on a programming error.
  */
 int mfd_fri3d_dj_addon_update(const struct device *dev, const void *image, size_t len,
-			      mfd_fri3d_dj_addon_progress_cb_t cb, void *user_data,
-			      k_timeout_t wait);
+			      mfd_fri3d_dj_addon_progress_cb_t cb, void *user_data);
 
 #ifdef __cplusplus
 }
