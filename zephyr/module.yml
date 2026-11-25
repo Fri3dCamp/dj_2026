@@ -1,0 +1,8 @@
+# Zephyr module: the Fri3d badge's side of this add-on (drivers for the
+# badge's ESP32-S3). The add-on's own firmware is in Firmware/.
+name: fri3d-dj-2026
+build:
+  cmake: zephyr
+  kconfig: zephyr/Kconfig
+  settings:
+    dts_root: zephyr

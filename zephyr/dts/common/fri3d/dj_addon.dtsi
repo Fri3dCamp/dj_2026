@@ -1,0 +1,52 @@
+/*
+ * Copyright (c) 2026 Bert Outtier <outtierbert@gmail.com>
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * DJ add-on on the expansion connector (2026 add-on, works on both badges).
+ * It sends MIDI on its UART (IO44, UART0 RX) on every input change: the
+ * driver reads the inputs over I2C when data arrives there.
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+
+/ {
+	/*
+	 * Debug interface of the add-on, to update its firmware: its I2C pins
+	 * become SWD after the remap command (configuration register bit 0), and
+	 * go back to I2C0 when the session ends.
+	 */
+	dj_addon_swd: dj-addon-swd {
+		compatible = "wch,rvswd";
+		swdio-gpios = <&gpio0 9 GPIO_ACTIVE_HIGH>;  /* IO9, I2C0 SDA */
+		swclk-gpios = <&gpio0 18 GPIO_ACTIVE_HIGH>; /* IO18, I2C0 SCL */
+		pinctrl-0 = <&i2c0_default>;
+		pinctrl-names = "default";
+	};
+};
+
+&i2c0 {
+	dj_addon: dj-addon@3a {
+		compatible = "fri3d,dj-addon";
+		reg = <0x3a>;
+		uart = <&uart0>;
+		rvswd = <&dj_addon_swd>;
+
+		dj_addon_input: input {
+			compatible = "fri3d,dj-addon-input";
+			button-codes = <INPUT_BTN_0 INPUT_BTN_1 INPUT_BTN_2 INPUT_BTN_3
+					INPUT_BTN_4 INPUT_BTN_5 INPUT_BTN_6 INPUT_BTN_7>;
+			analog-codes = <INPUT_ABS_X INPUT_ABS_Y INPUT_ABS_Z INPUT_ABS_THROTTLE
+					INPUT_ABS_RX INPUT_ABS_RY INPUT_ABS_RZ INPUT_ABS_RUDDER
+					INPUT_ABS_WHEEL>;
+			encoder-codes = <INPUT_REL_DIAL INPUT_REL_MISC>;
+			/* the crossfader stops about 95 counts from one end, a potmeter 60 */
+			analog-dead-zone = <128>;
+		};
+
+		dj_addon_leds: leds {
+			compatible = "fri3d,dj-addon-led-strip";
+		};
+	};
+};

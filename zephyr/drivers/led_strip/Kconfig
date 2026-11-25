@@ -1,0 +1,21 @@
+# Copyright (c) 2026 Bert Outtier <outtierbert@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
+
+if LED_STRIP
+
+config LED_STRIP_FRI3D_DJ_ADDON
+	bool "Fri3d Camp 2026 DJ add-on button LEDs"
+	default y
+	depends on DT_HAS_FRI3D_DJ_ADDON_LED_STRIP_ENABLED
+	depends on MULTITHREADING # the MFD uses work items
+	select MFD
+	help
+	  The 8 RGB button LEDs of the Fri3d Camp 2026 DJ add-on, as an LED
+	  strip.
+
+config LED_STRIP_FRI3D_DJ_ADDON_INIT_PRIORITY
+	int "Initialization priority"
+	default LED_STRIP_INIT_PRIORITY
+	depends on LED_STRIP_FRI3D_DJ_ADDON
+
+endif # LED_STRIP
