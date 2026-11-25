@@ -21,13 +21,9 @@ struct mfd_fri3d_dj_addon_config {
 	/* UART that receives the add-on's MIDI output */
 	const struct device *uart;
 	uint32_t poll_period_ms;
-	uint32_t probe_period_ms;
-	uint32_t connect_timeout_ms;
 #ifdef CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE
 	/* RVSWD interface on the add-on's I2C pins, or NULL */
 	const struct device *rvswd;
-	/* enable of the power domain of the other devices on the bus, or none */
-	struct gpio_dt_spec update_power;
 #endif
 };
 
@@ -35,8 +31,6 @@ struct mfd_fri3d_dj_addon_data {
 	const struct device *dev;
 	struct k_work_delayable work;
 	bool connected;
-	/* stop looking for the add-on */
-	k_timepoint_t connect_end;
 	/* a firmware update is running: the I2C pins are SWD */
 	bool updating;
 	/* Report the inputs even if they did not change (after connecting) */
@@ -50,7 +44,18 @@ struct mfd_fri3d_dj_addon_data {
 	struct mfd_fri3d_dj_addon_inputs inputs;
 	mfd_fri3d_dj_addon_input_cb_t cb;
 	void *user_data;
+#ifdef CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE
+	mfd_fri3d_dj_addon_pre_update_cb_t pre_update;
+	mfd_fri3d_dj_addon_post_update_cb_t post_update;
+	void *update_user_data;
+#endif
 };
+
+/*
+ * The add-on's firmware answers on I2C about a second after it powers up: the
+ * driver connects to it once this long after boot, and after an update.
+ */
+#define MFD_FRI3D_DJ_ADDON_START_MS 1500
 
 /*
  * An add-on connected, with CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE_ON_CONNECT:

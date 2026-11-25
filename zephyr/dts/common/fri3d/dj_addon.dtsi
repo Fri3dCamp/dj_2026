@@ -32,8 +32,6 @@
 		reg = <0x3a>;
 		uart = <&uart0>;
 		rvswd = <&dj_addon_swd>;
-		/* the other devices on the bus are off while updating the add-on */
-		update-power-domain = <&aux_3v3>;
 
 		dj_addon_input: input {
 			compatible = "fri3d,dj-addon-input";

@@ -6,10 +6,11 @@
  * DJ add-on of the Fri3d Camp 2026 badge (CH32X035 with the dj_2026
  * firmware) on the expansion connector.
  *
- * The add-on is optional: the driver looks for it for a few seconds after
- * boot (plugging it in or out at runtime is not supported). Its firmware (a
- * release build) sends a MIDI message on its UART on every input change: data
- * on the UART triggers a read of the inputs over I2C, so they are not polled.
+ * The devicetree says the add-on is there: the driver connects to it once its
+ * firmware is up after boot, and logs an error when it does not answer (data
+ * on its UART makes it try again). Its firmware (a release build) sends a MIDI
+ * message on its UART on every input change: data on the UART triggers a read
+ * of the inputs over I2C, so they are not polled.
  * It needs firmware v1.0.4 or later: older firmware can return a 16-bit value
  * with its two bytes from before and after an ADC update.
  *
@@ -157,12 +158,9 @@ static void mfd_fri3d_dj_addon_work(struct k_work *work)
 		return;
 	}
 
+	/* the devicetree says there is an add-on: no answer is an error */
 	if (!data->connected && mfd_fri3d_dj_addon_connect(dev) != 0) {
-		if (sys_timepoint_expired(data->connect_end)) {
-			LOG_INF("%s: no add-on", dev->name);
-		} else {
-			k_work_reschedule(dwork, K_MSEC(config->probe_period_ms));
-		}
+		LOG_ERR("%s: no answer from the add-on", dev->name);
 		return;
 	}
 
@@ -219,7 +217,8 @@ static void mfd_fri3d_dj_addon_uart_isr(const struct device *uart, void *user_da
 		received = true;
 	}
 
-	if (!received || !data->connected || data->updating) {
+	/* data from an add-on that did not answer yet: try to connect again */
+	if (!received || data->updating) {
 		return;
 	}
 
@@ -252,9 +251,8 @@ static int mfd_fri3d_dj_addon_init(const struct device *dev)
 	uart_irq_callback_user_data_set(config->uart, mfd_fri3d_dj_addon_uart_isr, (void *)dev);
 	uart_irq_rx_enable(config->uart);
 
-	/* look for the add-on from the work queue, it may not be connected */
-	data->connect_end = sys_timepoint_calc(K_MSEC(config->connect_timeout_ms));
-	k_work_schedule(&data->work, K_NO_WAIT);
+	/* connect from the work queue, once the add-on's firmware is up */
+	k_work_schedule(&data->work, K_TIMEOUT_ABS_MS(MFD_FRI3D_DJ_ADDON_START_MS));
 
 	return 0;
 }
@@ -264,17 +262,10 @@ static int mfd_fri3d_dj_addon_init(const struct device *dev)
 		.i2c = I2C_DT_SPEC_INST_GET(inst),                                                 \
 		.uart = DEVICE_DT_GET(DT_INST_PHANDLE(inst, uart)),                                \
 		.poll_period_ms = DT_INST_PROP(inst, poll_period_ms),                              \
-		.probe_period_ms = DT_INST_PROP(inst, probe_period_ms),                            \
-		.connect_timeout_ms = DT_INST_PROP(inst, connect_timeout_ms),                      \
 		IF_ENABLED(CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE,                                       \
 			   (.rvswd = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, rvswd),               \
 						 (DEVICE_DT_GET(DT_INST_PHANDLE(inst, rvswd))),     \
-						 (NULL)),                                           \
-			    .update_power = COND_CODE_1(                                           \
-				    DT_INST_NODE_HAS_PROP(inst, update_power_domain),              \
-				    (GPIO_DT_SPEC_GET(DT_INST_PHANDLE(inst, update_power_domain),  \
-						      enable_gpios)),                              \
-				    ({0})),))                                                      \
+						 (NULL)),))                                        \
 	};                                                                                         \
                                                                                                    \
 	static struct mfd_fri3d_dj_addon_data mfd_fri3d_dj_addon_data##inst;                       \

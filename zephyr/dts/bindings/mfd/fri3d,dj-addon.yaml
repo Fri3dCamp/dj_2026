@@ -49,28 +49,7 @@ properties:
       RVSWD interface (wch,rvswd) on the add-on's I2C pins (the expansion I2C
       bus), to update its firmware (CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE).
 
-  update-power-domain:
-    type: phandle
-    description: |
-      Power domain (power-domain-gpio) of the other devices on the expansion
-      I2C bus, 3V3_AUX on the badge. It is switched off while the add-on is
-      updated, so they do not see the SWD traffic; the add-on itself has its
-      own supply. Their drivers are not initialized again afterwards: restart.
-
   poll-period-ms:
     type: int
     default: 10
     description: Minimum time between two reads of the inputs.
-
-  probe-period-ms:
-    type: int
-    default: 500
-    description: |
-      Period to look for the add-on after boot and after a firmware update.
-
-  connect-timeout-ms:
-    type: int
-    default: 3000
-    description: |
-      How long to look for the add-on after boot and after a firmware update.
-      Its firmware answers on I2C one second after it starts.

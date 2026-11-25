@@ -150,6 +150,46 @@ void mfd_fri3d_dj_addon_set_input_callback(const struct device *dev,
 typedef void (*mfd_fri3d_dj_addon_progress_cb_t)(size_t done, size_t total, void *user_data);
 
 /**
+ * @brief Called by mfd_fri3d_dj_addon_update() before the SWD traffic starts.
+ *
+ * The add-on has given its I2C pins to SWD: switch off or keep away what must
+ * not see that traffic (it starts like an I2C start condition), e.g. the other
+ * devices on the bus and the bus pull-ups.
+ *
+ * @param dev DJ add-on MFD device.
+ * @param user_data As given to mfd_fri3d_dj_addon_set_update_callbacks().
+ */
+typedef void (*mfd_fri3d_dj_addon_pre_update_cb_t)(const struct device *dev, void *user_data);
+
+/**
+ * @brief Called by mfd_fri3d_dj_addon_update() after the SWD session.
+ *
+ * The pins are I2C again: undo what the pre-update callback did, e.g. switch
+ * the other devices on the bus on again and restart them.
+ *
+ * @param dev DJ add-on MFD device.
+ * @param result 0 when the add-on runs the new firmware, else a negative errno.
+ * @param user_data As given to mfd_fri3d_dj_addon_set_update_callbacks().
+ */
+typedef void (*mfd_fri3d_dj_addon_post_update_cb_t)(const struct device *dev, int result,
+						    void *user_data);
+
+/**
+ * @brief Set the callbacks around a firmware update (one pair per device).
+ *
+ * Needs CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE. Both are optional (NULL).
+ *
+ * @param dev DJ add-on MFD device.
+ * @param pre Called before the SWD traffic starts.
+ * @param post Called after the SWD session.
+ * @param user_data Passed to both.
+ */
+void mfd_fri3d_dj_addon_set_update_callbacks(const struct device *dev,
+					     mfd_fri3d_dj_addon_pre_update_cb_t pre,
+					     mfd_fri3d_dj_addon_post_update_cb_t post,
+					     void *user_data);
+
+/**
  * @brief Install new add-on firmware over RVSWD.
  *
  * Needs CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE and the rvswd property. Firmware
@@ -159,11 +199,9 @@ typedef void (*mfd_fri3d_dj_addon_progress_cb_t)(size_t done, size_t total, void
  * in that long. The add-on is programmed (every page is read back) and
  * restarts into the new firmware; the pins go back to I2C and the driver
  * connects to it again (input callback with NULL first). The expansion I2C
- * bus is unavailable meanwhile, about 10 seconds for 11 kB.
- *
- * With the update-power-domain property the other devices on the bus (3V3_AUX:
- * display, touch, IMU, ...) are switched off while updating, so they do not
- * see the SWD traffic. They need to be initialized again, e.g. by restarting.
+ * bus is unavailable meanwhile, about 10 seconds for 11 kB. The callbacks of
+ * mfd_fri3d_dj_addon_set_update_callbacks() run around the SWD session, e.g.
+ * to switch the other devices on the bus off while it runs.
  *
  * @param dev DJ add-on MFD device.
  * @param image Firmware binary (dj_2026 release build).

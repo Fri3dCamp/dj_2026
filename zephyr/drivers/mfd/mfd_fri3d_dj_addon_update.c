@@ -17,7 +17,6 @@
 #include <rvswd/ch32.h>
 #include <rvswd/rvswd.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/sys/reboot.h>
 
 #include "mfd_fri3d_dj_addon_priv.h"
 
@@ -28,8 +27,6 @@ static unsigned int mfd_fri3d_dj_addon_updates;
 
 /* Delay for the add-on to give its I2C pins to SWD after the remap command */
 #define REMAP_DELAY_MS 200
-/* Time for the other devices on the bus to power down and up */
-#define POWER_DELAY_MS 50
 /* Debug module status register: answers when a target is there */
 #define DMSTATUS       0x11
 
@@ -70,8 +67,7 @@ int mfd_fri3d_dj_addon_update(const struct device *dev, const void *image, size_
 	if (config->rvswd == NULL) {
 		return -ENOTSUP;
 	}
-	if (!device_is_ready(config->rvswd) ||
-	    (config->update_power.port != NULL && !gpio_is_ready_dt(&config->update_power))) {
+	if (!device_is_ready(config->rvswd)) {
 		return -ENODEV;
 	}
 
@@ -90,14 +86,9 @@ int mfd_fri3d_dj_addon_update(const struct device *dev, const void *image, size_
 		k_msleep(REMAP_DELAY_MS);
 	}
 
-	/*
-	 * The other devices on the bus must not see the SWD traffic (it starts
-	 * like an I2C start condition): switch them off. The add-on has its own
-	 * supply. After the remap command: the bus pull-ups are on that rail too.
-	 */
-	if (config->update_power.port != NULL) {
-		gpio_pin_set_dt(&config->update_power, 0);
-		k_msleep(POWER_DELAY_MS);
+	/* the application keeps what must not see the SWD traffic away from it */
+	if (data->pre_update != NULL) {
+		data->pre_update(dev, data->update_user_data);
 	}
 
 	ret = mfd_fri3d_dj_addon_find(config->rvswd, wait, vendor);
@@ -126,17 +117,28 @@ int mfd_fri3d_dj_addon_update(const struct device *dev, const void *image, size_
 		mfd_fri3d_dj_addon_updates++;
 	}
 
-	/* the pins go back to I2C, the add-on answers again one second after it starts */
+	/* the pins go back to I2C */
 	rvswd_disconnect(config->rvswd);
-	if (config->update_power.port != NULL) {
-		gpio_pin_set_dt(&config->update_power, 1);
-		k_msleep(POWER_DELAY_MS);
+	if (data->post_update != NULL) {
+		data->post_update(dev, ret, data->update_user_data);
 	}
 	data->updating = false;
-	data->connect_end = sys_timepoint_calc(K_MSEC(config->connect_timeout_ms));
-	k_work_reschedule(&data->work, K_NO_WAIT);
+	/* connect again once the firmware is up */
+	k_work_reschedule(&data->work, K_MSEC(MFD_FRI3D_DJ_ADDON_START_MS));
 
 	return ret;
+}
+
+void mfd_fri3d_dj_addon_set_update_callbacks(const struct device *dev,
+					     mfd_fri3d_dj_addon_pre_update_cb_t pre,
+					     mfd_fri3d_dj_addon_post_update_cb_t post,
+					     void *user_data)
+{
+	struct mfd_fri3d_dj_addon_data *data = dev->data;
+
+	data->pre_update = pre;
+	data->post_update = post;
+	data->update_user_data = user_data;
 }
 
 #ifdef FRI3D_DJ_ADDON_HAS_FIRMWARE
@@ -157,27 +159,6 @@ static void mfd_fri3d_dj_addon_bundled_version(uint8_t version[3])
 }
 #endif
 
-/*
- * After an update that switched off the other devices on the bus (display,
- * touch, IMU, ...): their drivers do not initialize them again, so restart.
- */
-static void __maybe_unused mfd_fri3d_dj_addon_restart_after_update(const struct device *dev)
-{
-	const struct mfd_fri3d_dj_addon_config *config = dev->config;
-
-	if (config->update_power.port == NULL) {
-		return;
-	}
-
-#ifdef CONFIG_REBOOT
-	LOG_INF("%s: restarting, the devices on the bus were switched off", dev->name);
-	k_msleep(100);
-	sys_reboot(SYS_REBOOT_COLD);
-#else
-	LOG_WRN("%s: restart: the devices on the bus were switched off", dev->name);
-#endif
-}
-
 #ifdef CONFIG_MFD_FRI3D_DJ_ADDON_UPDATE_ON_CONNECT
 static void mfd_fri3d_dj_addon_update_work(struct k_work *work)
 {
@@ -186,11 +167,8 @@ static void mfd_fri3d_dj_addon_update_work(struct k_work *work)
 	ARG_UNUSED(work);
 
 #ifdef FRI3D_DJ_ADDON_HAS_FIRMWARE
-	if (mfd_fri3d_dj_addon_update(dev, mfd_fri3d_dj_addon_firmware,
-				      sizeof(mfd_fri3d_dj_addon_firmware), NULL, NULL,
-				      K_NO_WAIT) == 0) {
-		mfd_fri3d_dj_addon_restart_after_update(dev);
-	}
+	(void)mfd_fri3d_dj_addon_update(dev, mfd_fri3d_dj_addon_firmware,
+					sizeof(mfd_fri3d_dj_addon_firmware), NULL, NULL, K_NO_WAIT);
 #endif
 }
 
@@ -294,13 +272,12 @@ static int cmd_djaddon_update(const struct shell *sh, size_t argc, char **argv)
 		return ret;
 	}
 
-	/* it answers on I2C one second after it starts */
+	/* the driver connects again once the firmware is up */
 	for (int i = 0; i < 40 && !mfd_fri3d_dj_addon_is_connected(shell_dj_addon); i++) {
 		k_msleep(100);
 	}
 
 	cmd_djaddon_version(sh, 0, NULL);
-	mfd_fri3d_dj_addon_restart_after_update(shell_dj_addon);
 
 	return 0;
 }
